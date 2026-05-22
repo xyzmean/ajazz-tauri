@@ -1,8 +1,7 @@
-# dev-tauri — Ajazz driver (Tauri + Vue 3)
+# ajazz-tauri — Ajazz driver (Tauri + Vue 3)
 
-Ветка **`dev-tauri`**: автономный драйвер клавиатур Ajazz на **Tauri (Rust) +
-Vue 3**, владеющий и протоколом, и UI — без скрейпленного апстрим-бандла и без
-WebHID.
+Автономный драйвер клавиатур Ajazz на **Tauri (Rust) + Vue 3**, владеющий и
+протоколом, и UI — без скрейпленного апстрим-бандла и без WebHID.
 
 ## Почему такая форма
 
@@ -11,17 +10,17 @@ WebHID.
 не поддерживают WebHID). Поэтому весь HID-обмен живёт в **Rust** через крейт
 `hidapi`, а фронтенд на Vue общается с ним через Tauri `invoke()`.
 
-Сам протокол портирован из ветки **`reverse`** (`src/protocol/core.ts`) в
+Сам протокол портирован из **`ajazz-driver-reverse`** (`src/protocol/core.ts`) в
 `src-tauri/src/protocol.rs` (опкоды, кадрирование 0xAA/0x55, чанк-транспорт,
 декод `getDeviceInfo`).
 
-## Привязка к ветке `reverse` (по коммиту)
+## Привязка к `ajazz-driver-reverse` (по коммиту)
 
-Таблица моделей — не дублируется руками: она берётся из ветки `reverse`,
-запиненной по конкретному коммиту.
+Таблица моделей — не дублируется руками: она берётся из репозитория
+`ajazz-driver-reverse`, запиненного по конкретному коммиту.
 
-- **`.reverse-rev`** — SHA коммита ветки `reverse`, на который опирается сборка.
-- CI чекаутит `reverse` на этот SHA в `.reverse-src/` и копирует оттуда
+- **`.reverse-rev`** — SHA коммита `ajazz-driver-reverse`, на который опирается сборка.
+- CI чекаутит этот репозиторий на SHA в `.reverse-src/` и копирует оттуда
   `models.json` → `src-tauri/models.json` перед сборкой (см.
   `.github/workflows/build-tauri.yml`).
 - Закоммиченный `src-tauri/models.json` соответствует текущему пину; обновление

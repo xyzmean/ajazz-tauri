@@ -3,7 +3,7 @@ name: Build Tauri Driver
 on:
   push:
     branches:
-      - dev-tauri
+      - main
   workflow_dispatch:
 
 jobs:
@@ -14,7 +14,7 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout dev-tauri
+      - name: Checkout this repo
         uses: actions/checkout@v4
 
       - name: Read pinned reverse commit
@@ -22,9 +22,10 @@ jobs:
         shell: bash
         run: echo "sha=$(tr -d '[:space:]' < .reverse-rev)" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout reverse branch at pinned commit
+      - name: Checkout ajazz-driver-reverse at pinned commit
         uses: actions/checkout@v4
         with:
+          repository: xyzmean/ajazz-driver-reverse
           ref: ${{ steps.rev.outputs.sha }}
           path: .reverse-src
 
