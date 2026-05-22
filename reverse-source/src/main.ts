@@ -112,6 +112,20 @@ function createWindow(port: number): void {
 
   autoGrantWebHID(win.webContents.session);
 
+  // Inject our reverse-engineered protocol + dev panel into the page's main
+  // world once it loads, so OUR code drives the device inside the existing UI.
+  win.webContents.on("did-finish-load", async () => {
+    try {
+      const injectPath = path.join(__dirname, "..", "dist-web", "inject.js");
+      const source = fs.readFileSync(injectPath, "utf-8");
+      await win.webContents.executeJavaScript(source);
+      const hasHid = await win.webContents.executeJavaScript("typeof navigator.hid");
+      console.log(`Injected reverse-driver panel (navigator.hid: ${hasHid})`);
+    } catch (err) {
+      console.error("Failed to inject reverse-driver:", err);
+    }
+  });
+
   win.maximize();
   win.show();
   void win.loadURL(`http://127.0.0.1:${port}/`);

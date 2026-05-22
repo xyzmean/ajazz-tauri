@@ -4,7 +4,7 @@
   "description": "Reverse-engineered, self-owned Ajazz WebHID driver (protocol layer + Electron host reusing the existing UI)",
   "main": "dist/main.js",
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.json && node esbuild.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "start": "npm run build && electron .",
     "start:debug": "npm run build && electron . --devtools",
@@ -17,6 +17,7 @@
     "@types/w3c-web-hid": "^1.0.6",
     "electron": "^33.0.0",
     "electron-packager": "^17.1.2",
+    "esbuild": "^0.23.0",
     "typescript": "^5.4.0"
   }
 }
