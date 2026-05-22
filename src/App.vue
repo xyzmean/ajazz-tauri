@@ -18,125 +18,66 @@ import {
 } from "./lib/api";
 
 // --- Hardware Key Backlight Layout Matrix ---
-const keysList = [
-  // Row 1 (Y=0)
-  { label: "Esc", idx: 0, x: 0, y: 0, w: 1 },
-  { label: "F1", idx: 1, x: 2, y: 0, w: 1 },
-  { label: "F2", idx: 2, x: 3, y: 0, w: 1 },
-  { label: "F3", idx: 3, x: 4, y: 0, w: 1 },
-  { label: "F4", idx: 4, x: 5, y: 0, w: 1 },
-  { label: "F5", idx: 5, x: 6.5, y: 0, w: 1 },
-  { label: "F6", idx: 6, x: 7.5, y: 0, w: 1 },
-  { label: "F7", idx: 7, x: 8.5, y: 0, w: 1 },
-  { label: "F8", idx: 8, x: 9.5, y: 0, w: 1 },
-  { label: "F9", idx: 9, x: 11, y: 0, w: 1 },
-  { label: "F10", idx: 10, x: 12, y: 0, w: 1 },
-  { label: "F11", idx: 11, x: 13, y: 0, w: 1 },
-  { label: "F12", idx: 12, x: 14, y: 0, w: 1 },
-  { label: "Del", idx: 13, x: 15.5, y: 0, w: 1 },
-  { label: "Ins", idx: 14, x: 16.5, y: 0, w: 1 },
-  { label: "PgUp", idx: 15, x: 17.5, y: 0, w: 1 },
-  { label: "PgDn", idx: 16, x: 18.5, y: 0, w: 1 },
+// --- Hardware Key Backlight Layout Matrix ---
+interface KeyboardKey {
+  className: string;
+  value: number;
+  name: string;
+  keyCode: number;
+  key: string;
+}
 
-  // Row 2 (Y=1)
-  { label: "~", idx: 17, x: 0, y: 1, w: 1 },
-  { label: "1", idx: 18, x: 1, y: 1, w: 1 },
-  { label: "2", idx: 19, x: 2, y: 1, w: 1 },
-  { label: "3", idx: 20, x: 3, y: 1, w: 1 },
-  { label: "4", idx: 21, x: 4, y: 1, w: 1 },
-  { label: "5", idx: 22, x: 5, y: 1, w: 1 },
-  { label: "6", idx: 23, x: 6, y: 1, w: 1 },
-  { label: "7", idx: 24, x: 7, y: 1, w: 1 },
-  { label: "8", idx: 25, x: 8, y: 1, w: 1 },
-  { label: "9", idx: 26, x: 9, y: 1, w: 1 },
-  { label: "0", idx: 27, x: 10, y: 1, w: 1 },
-  { label: "-", idx: 28, x: 11, y: 1, w: 1 },
-  { label: "=", idx: 29, x: 12, y: 1, w: 1 },
-  { label: "Backspace", idx: 30, x: 13, y: 1, w: 2 },
-  { label: "NumL", idx: 31, x: 15.5, y: 1, w: 1 },
-  { label: "/", idx: 32, x: 16.5, y: 1, w: 1 },
-  { label: "*", idx: 33, x: 17.5, y: 1, w: 1 },
-  { label: "-", idx: 34, x: 18.5, y: 1, w: 1 },
+const rawKeyboardList: KeyboardKey[][] = [[{className:"",value:0,name:"Esc",keyCode:41,key:"Escape"},{className:"ml-15",value:1,name:"F1",keyCode:58,key:"F1"},{className:"",value:2,name:"F2",keyCode:59,key:"F2"},{className:"",value:3,name:"F3",keyCode:60,key:"F3"},{className:"",value:4,name:"F4",keyCode:61,key:"F4"},{className:"ml-auto",value:5,name:"F5",keyCode:62,key:"F5"},{className:"",value:6,name:"F6",keyCode:63,key:"F6"},{className:"",value:7,name:"F7",keyCode:64,key:"F7"},{className:"",value:8,name:"F8",keyCode:65,key:"F8"},{className:"ml-auto",value:9,name:"F9",keyCode:66,key:"F9"},{className:"",value:10,name:"F10",keyCode:67,key:"F10"},{className:"",value:11,name:"F11",keyCode:68,key:"F11"},{className:"mr-5",value:12,name:"F12",keyCode:69,key:"F12"},{className:"mr-5",value:106,name:"Del",keyCode:76,key:"Delete"},{className:"",value:103,name:"Insert",keyCode:73,key:"Insert"},{className:"",value:99,name:"Print",keyCode:70,key:"PrintScreen"},{className:"",value:100,name:"Scroll",keyCode:71,key:"ScrollLock"},{className:"",value:102,name:"Pause",keyCode:72,key:"Pause"}],[{className:"",value:16,name:"` ~",keyCode:53,key:"Backquote"},{className:"",value:17,name:"1 !",keyCode:30,key:"Digit1"},{className:"",value:18,name:"2 @",keyCode:31,key:"Digit2"},{className:"",value:19,name:"3 #",keyCode:32,key:"Digit3"},{className:"",value:20,name:"4 $",keyCode:33,key:"Digit4"},{className:"",value:21,name:"5 %",keyCode:34,key:"Digit5"},{className:"",value:22,name:"6 ^",keyCode:35,key:"Digit6"},{className:"",value:23,name:"7 &",keyCode:36,key:"Digit7"},{className:"",value:24,name:"8 *",keyCode:37,key:"Digit8"},{className:"",value:25,name:"9 (",keyCode:38,key:"Digit9"},{className:"",value:26,name:"0 )",keyCode:39,key:"Digit0"},{className:"",value:27,name:"ˉ -",keyCode:45,key:"Minus"},{className:"",value:28,name:"= +",keyCode:46,key:"Equal"},{className:"w-30",value:92,name:"Back",keyCode:42,key:"Backspace"},{className:"ml-5",value:104,name:"Home",keyCode:74,key:"Home"},{className:"ml-5",value:29,name:"Num Lock",keyCode:83,key:"NumLock"},{className:"",value:30,name:"Num /",keyCode:84,key:"NumpadDivide"},{className:"",value:31,name:"Num *",keyCode:85,key:"NumpadMultiply"},{className:"",value:109,name:"Num -",keyCode:86,key:"Numpadsubtract"}],[{className:"w-22",value:32,name:"Tab",keyCode:43,key:"Tab"},{className:"",value:33,name:"Q",keyCode:20,key:"KeyQ"},{className:"",value:34,name:"W",keyCode:26,key:"KeyW"},{className:"",value:35,name:"E",keyCode:8,key:"KeyE"},{className:"",value:36,name:"R",keyCode:21,key:"KeyR"},{className:"",value:37,name:"T",keyCode:23,key:"KeyT"},{className:"",value:38,name:"Y",keyCode:28,key:"KeyY"},{className:"",value:39,name:"U",keyCode:24,key:"KeyU"},{className:"",value:40,name:"I",keyCode:12,key:"KeyI"},{className:"",value:41,name:"O",keyCode:18,key:"KeyO"},{className:"",value:42,name:"P",keyCode:19,key:"KeyP"},{className:"",value:43,name:"[ {",keyCode:47,key:"BracketLeft"},{className:"",value:44,name:"] }",keyCode:48,key:"BracketRight"},{className:"w-23",value:60,name:"\\ | ",keyCode:49,key:"Backslash"},{className:"ml-auto mr-5",value:105,name:"PgUp",keyCode:75,key:"PageUp"},{className:"",value:45,name:"Num 7",keyCode:95,key:"Numpad7"},{className:"",value:46,name:"Num 8",keyCode:96,key:"Numpad8"},{className:"",value:47,name:"Num 9",keyCode:97,key:"Numpad9"},{className:"h-30",value:110,name:"Num +",keyCode:87,key:"NumpadAdd"}],[{className:"w-27 mt--15",value:48,name:"Caps",keyCode:57,key:"CapsLock"},{className:"mt--15",value:49,name:"A",keyCode:4,key:"KeyA"},{className:"mt--15",value:50,name:"S",keyCode:22,key:"KeyS"},{className:"mt--15",value:51,name:"D",keyCode:7,key:"KeyD"},{className:"mt--15",value:52,name:"F",keyCode:9,key:"KeyF"},{className:"mt--15",value:53,name:"G",keyCode:10,key:"KeyG"},{className:"mt--15",value:54,name:"H",keyCode:11,key:"KeyH"},{className:"mt--15",value:55,name:"J",keyCode:13,key:"KeyJ"},{className:"mt--15",value:56,name:"K",keyCode:14,key:"KeyK"},{className:"mt--15",value:57,name:"L",keyCode:15,key:"KeyL"},{className:"mt--15",value:58,name:"; :",keyCode:51,key:"Semicolon"},{className:"mt--15",value:59,name:`' "`,keyCode:52,key:"Quote"},{className:"mt--15 mr-5 w-33",value:76,name:"Enter",keyCode:40,key:"Enter"},{className:"mt--15",value:108,name:"PgDn",keyCode:78,key:"PageDown"},{className:"ml-5 mt--15",value:61,name:"Num 4",keyCode:92,key:"Numpad4"},{className:"mt--15",value:62,name:"Num 5",keyCode:93,key:"Numpad5"},{className:"mr-15 mt--15",value:63,name:"Num 6",keyCode:94,key:"Numpad6"}],[{className:"w-34",value:64,name:"L-Shift",keyCode:225,key:"ShiftLeft"},{className:"",value:65,name:"Z",keyCode:29,key:"KeyZ"},{className:"",value:66,name:"X",keyCode:27,key:"KeyX"},{className:"",value:67,name:"C",keyCode:6,key:"KeyC"},{className:"",value:68,name:"V",keyCode:25,key:"KeyV"},{className:"",value:69,name:"B",keyCode:5,key:"KeyB"},{className:"",value:70,name:"N",keyCode:17,key:"KeyN"},{className:"",value:71,name:"M",keyCode:16,key:"KeyM"},{className:"",value:72,name:", <",keyCode:54,key:"Comma"},{className:"",value:73,name:". >",keyCode:55,key:"Period"},{className:"",value:74,name:"/ ?",keyCode:56,key:"Slash"},{className:"w-25",value:75,name:"R-Shift",keyCode:229,key:"ShiftRight"},{className:"mr-20",value:90,name:"↑",keyCode:82,key:"ArrowUp"},{className:"ml-5",value:77,name:"Num 1",keyCode:89,key:"Numpad1"},{className:"",value:78,name:"Num 2",keyCode:90,key:"Numpad2"},{className:"",value:79,name:"Num 3",keyCode:91,key:"Numpad3"},{className:"h-30",value:95,name:"Num Enter",keyCode:88,key:"NumpadEnter"}],[{className:"w-18 mt--15",value:80,name:"L-Ctrl",keyCode:224,key:"ControlLeft"},{className:"w-18 mt--15",value:81,name:"L-Win",keyCode:227,key:"MetaLeft"},{className:"w-18 mt--15",value:82,name:"L-Alt",keyCode:226,key:"AltLeft"},{className:"flex-1 mt--15",value:83,name:"Spacebar",keyCode:44,key:"Space"},{className:"w-18 mt--15",value:85,name:"Fn",keyCode:175,key:"-1"},{className:"w-18 mt--15",value:87,name:"R-Ctrl",keyCode:228,key:"ControlRight"},{className:"ml-5 mt--15",value:88,name:"←",keyCode:80,key:"ArrowLeft"},{className:"mt--15",value:89,name:"↓",keyCode:81,key:"ArrowDown"},{className:"mt--15 mr-5",value:91,name:"→",keyCode:79,key:"ArrowRight"},{className:"ml-5 w-29 mt--15",value:93,name:"Num 0",keyCode:98,key:"Numpad0"},{className:"mr-15 mt--15",value:94,name:"Num .",keyCode:99,key:"NumpadDecimal"}]];
 
-  // Row 3 (Y=2)
-  { label: "Tab", idx: 35, x: 0, y: 2, w: 1.5 },
-  { label: "Q", idx: 36, x: 1.5, y: 2, w: 1 },
-  { label: "W", idx: 37, x: 2.5, y: 2, w: 1 },
-  { label: "E", idx: 38, x: 3.5, y: 2, w: 1 },
-  { label: "R", idx: 39, x: 4.5, y: 2, w: 1 },
-  { label: "T", idx: 40, x: 5.5, y: 2, w: 1 },
-  { label: "Y", idx: 41, x: 6.5, y: 2, w: 1 },
-  { label: "U", idx: 42, x: 7.5, y: 2, w: 1 },
-  { label: "I", idx: 43, x: 8.5, y: 2, w: 1 },
-  { label: "O", idx: 44, x: 9.5, y: 2, w: 1 },
-  { label: "P", idx: 45, x: 10.5, y: 2, w: 1 },
-  { label: "[", idx: 46, x: 11.5, y: 2, w: 1 },
-  { label: "]", idx: 47, x: 12.5, y: 2, w: 1 },
-  { label: "\\", idx: 48, x: 13.5, y: 2, w: 1.5 },
-  { label: "7", idx: 49, x: 15.5, y: 2, w: 1 },
-  { label: "8", idx: 50, x: 16.5, y: 2, w: 1 },
-  { label: "9", idx: 51, x: 17.5, y: 2, w: 1 },
-  { label: "+", idx: 52, x: 18.5, y: 2, w: 1, h: 2 },
+// Flat list of keys with physical (x, y) coordinates for spatial visualizer algorithms
+const keysList: { label: string; idx: number; x: number; y: number; w: number; h?: number }[] = [];
 
-  // Row 4 (Y=3)
-  { label: "Caps", idx: 53, x: 0, y: 3, w: 1.75 },
-  { label: "A", idx: 54, x: 1.75, y: 3, w: 1 },
-  { label: "S", idx: 55, x: 2.75, y: 3, w: 1 },
-  { label: "D", idx: 56, x: 3.75, y: 3, w: 1 },
-  { label: "F", idx: 57, x: 4.75, y: 3, w: 1 },
-  { label: "G", idx: 58, x: 5.75, y: 3, w: 1 },
-  { label: "H", idx: 59, x: 6.75, y: 3, w: 1 },
-  { label: "J", idx: 60, x: 7.75, y: 3, w: 1 },
-  { label: "K", idx: 61, x: 8.75, y: 3, w: 1 },
-  { label: "L", idx: 62, x: 9.75, y: 3, w: 1 },
-  { label: ";", idx: 63, x: 10.75, y: 3, w: 1 },
-  { label: "'", idx: 64, x: 11.75, y: 3, w: 1 },
-  { label: "Enter", idx: 65, x: 12.75, y: 3, w: 2.25 },
-  { label: "4", idx: 66, x: 15.5, y: 3, w: 1 },
-  { label: "5", idx: 67, x: 16.5, y: 3, w: 1 },
-  { label: "6", idx: 68, x: 17.5, y: 3, w: 1 },
+rawKeyboardList.forEach((row, y) => {
+  let currentX = 0;
+  row.forEach((key) => {
+    let w = 1.0;
+    if (key.className.includes("w-18")) w = 1.25;
+    else if (key.className.includes("w-22")) w = 1.5;
+    else if (key.className.includes("w-23")) w = 1.6;
+    else if (key.className.includes("w-25")) w = 1.75;
+    else if (key.className.includes("w-27")) w = 1.9;
+    else if (key.className.includes("w-29")) w = 2.0;
+    else if (key.className.includes("w-30")) w = 2.15;
+    else if (key.className.includes("w-33")) w = 2.35;
+    else if (key.className.includes("w-34")) w = 2.4;
+    else if (key.className.includes("flex-1")) w = 6.25;
 
-  // Row 5 (Y=4)
-  { label: "Shift", idx: 69, x: 0, y: 4, w: 2.25 },
-  { label: "Z", idx: 70, x: 2.25, y: 4, w: 1 },
-  { label: "X", idx: 71, x: 3.25, y: 4, w: 1 },
-  { label: "C", idx: 72, x: 4.25, y: 4, w: 1 },
-  { label: "V", idx: 73, x: 5.25, y: 4, w: 1 },
-  { label: "B", idx: 74, x: 6.25, y: 4, w: 1 },
-  { label: "N", idx: 75, x: 7.25, y: 4, w: 1 },
-  { label: "M", idx: 76, x: 8.25, y: 4, w: 1 },
-  { label: ",", idx: 77, x: 9.25, y: 4, w: 1 },
-  { label: ".", idx: 78, x: 10.25, y: 4, w: 1 },
-  { label: "/", idx: 79, x: 11.25, y: 4, w: 1 },
-  { label: "Shift", idx: 80, x: 12.25, y: 4, w: 1.75 },
-  { label: "▲", idx: 81, x: 14.25, y: 4, w: 1 },
-  { label: "1", idx: 82, x: 15.5, y: 4, w: 1 },
-  { label: "2", idx: 83, x: 16.5, y: 4, w: 1 },
-  { label: "3", idx: 84, x: 17.5, y: 4, w: 1 },
-  { label: "Enter", idx: 85, x: 18.5, y: 4, w: 1, h: 2 },
+    let ml = 0.0;
+    if (key.className.includes("ml-15")) ml = 1.07;
+    else if (key.className.includes("ml-5")) ml = 0.35;
+    else if (key.className.includes("ml-auto")) ml = 0.5;
 
-  // Row 6 (Y=5)
-  { label: "Ctrl", idx: 86, x: 0, y: 5, w: 1.25 },
-  { label: "Win", idx: 87, x: 1.25, y: 5, w: 1.25 },
-  { label: "Alt", idx: 88, x: 2.5, y: 5, w: 1.25 },
-  { label: "Space", idx: 89, x: 3.75, y: 5, w: 6.25 },
-  { label: "Alt", idx: 90, x: 10, y: 5, w: 1.25 },
-  { label: "Fn", idx: 91, x: 11.25, y: 5, w: 1.25 },
-  { label: "Ctrl", idx: 92, x: 12.5, y: 5, w: 1.25 },
-  { label: "◀", idx: 93, x: 14.25, y: 5, w: 1 },
-  { label: "▼", idx: 94, x: 15.25, y: 5, w: 1 },
-  { label: "▶", idx: 95, x: 16.25, y: 5, w: 1 },
-  { label: "0", idx: 96, x: 17.5, y: 5, w: 2 },
-  { label: ".", idx: 97, x: 18.5, y: 5, w: 1 }
-];
+    let mr = 0.0;
+    if (key.className.includes("mr-15")) mr = 1.07;
+    else if (key.className.includes("mr-5")) mr = 0.35;
+    else if (key.className.includes("mr-20")) mr = 1.42;
 
-const keyboardRows = computed(() => {
-  const rows: any[][] = Array.from({ length: 6 }, () => []);
-  for (const k of keysList) {
-    rows[k.y].push(k);
-  }
-  return rows;
+    let h = 1.0;
+    if (key.className.includes("h-30")) h = 2.0;
+
+    currentX += ml;
+    const x = currentX;
+    currentX += w;
+    currentX += mr;
+
+    keysList.push({
+      label: key.name,
+      idx: key.value,
+      x: x,
+      y: y,
+      w: w,
+      h: h
+    });
+  });
 });
+
+const layoutWidth = Math.max(...keysList.map(k => k.x + k.w), 19.5);
+const layoutHeight = Math.max(...keysList.map(k => k.y), 5);
 
 // --- High-Performance LZW GIF Decoder ---
 function decompressLZW(minCodeSize: number, subBlocks: Uint8Array[], pixelCount: number): Uint8Array {
@@ -640,8 +581,8 @@ async function startAmbientSync() {
       const frame: LedColor[] = [];
       for (const key of keysList) {
         // Map 2D physical key matrix space to downsampled coordinates
-        const px = Math.min(63, Math.round((key.x / 19.5) * 63));
-        const py = Math.min(35, Math.round((key.y / 5) * 35));
+        const px = Math.min(63, Math.round((key.x / layoutWidth) * 63));
+        const py = Math.min(35, Math.round((key.y / layoutHeight) * 35));
         
         const offset = (py * 64 + px) * 4;
         const r = data[offset];
@@ -726,15 +667,15 @@ async function startEqualizer() {
         // Project real-time custom sound bouncing columns onto physical backlight matrix!
         const frame: LedColor[] = [];
         for (const key of keysList) {
-          const colIndex = Math.min(20, Math.floor((key.x / 19.5) * 20));
+          const colIndex = Math.min(20, Math.floor((key.x / layoutWidth) * 20));
           const amp = amplitudes[colIndex] || 0;
           
           const heightRatio = amp / 255;
-          const keyHeightRatio = (5 - key.y) / 5;
+          const keyHeightRatio = (layoutHeight - key.y) / layoutHeight;
           
           if (keyHeightRatio <= heightRatio) {
             // Neon pink-to-cyan audio column gradient
-            const ratio = (5 - key.y) / 5;
+            const ratio = (layoutHeight - key.y) / layoutHeight;
             const r = Math.round(255 * (1 - ratio) + 0 * ratio);
             const g = Math.round(0 * (1 - ratio) + 240 * ratio);
             const b = Math.round(127 * (1 - ratio) + 255 * ratio);
@@ -836,8 +777,8 @@ async function playNextGifFrame() {
   const AR_gif = w / h;
   
   for (const key of keysList) {
-    const u = key.x / 19.5;
-    const v = key.y / 5;
+    const u = key.x / layoutWidth;
+    const v = key.y / layoutHeight;
     
     let u_mapped, v_mapped, in_bounds = true;
     
@@ -1422,29 +1363,31 @@ onMounted(refresh);
               
               <div class="virtual-keyboard">
                 <div 
-                  v-for="(row, rIdx) in keyboardRows" 
+                  v-for="(row, rIdx) in rawKeyboardList" 
                   :key="rIdx" 
                   class="keyboard-row"
                 >
                   <div
                     v-for="key in row"
-                    :key="key.idx"
-                    class="key-cap"
+                    :key="key.value"
+                    :class="['key-item', key.className]"
                     :style="{ 
-                      width: (key.w * 40) + 'px', 
-                      height: (key.h ? (key.h * 40 + (key.h - 1) * 5) : 40) + 'px',
-                      textShadow: liveKeyColors[key.idx] ? `0 0 8px ${liveKeyColors[key.idx]}` : 'none',
-                      color: liveKeyColors[key.idx] ? '#fff' : '#a9b1d6',
-                      borderColor: liveKeyColors[key.idx] ? 'rgba(255,255,255,0.15)' : 'rgba(255,255,255,0.05)'
+                      borderColor: liveKeyColors[key.value] ? `${liveKeyColors[key.value]}` : 'rgba(255,255,255,0.08)',
+                      boxShadow: liveKeyColors[key.value] ? `0 0 12px ${liveKeyColors[key.value]}33` : 'none',
+                      color: liveKeyColors[key.value] ? '#fff' : '#a9b1d6'
                     }"
                   >
-                    <span style="font-size: 9px; pointer-events: none; margin-top: -4px;">{{ key.label }}</span>
+                    <div class="key-highlight-top"></div>
+                    <div class="key-content">
+                      <span class="key-label">{{ key.name }}</span>
+                    </div>
+                    <div class="key-shadow-bottom"></div>
                     <!-- Glowing custom LED projection -->
                     <div 
                       class="key-cap-led" 
                       :style="{ 
-                        backgroundColor: liveKeyColors[key.idx] || 'transparent',
-                        boxShadow: liveKeyColors[key.idx] ? `0 -1px 12px 2px ${liveKeyColors[key.idx]}` : 'none'
+                        backgroundColor: liveKeyColors[key.value] || 'transparent',
+                        boxShadow: liveKeyColors[key.value] ? `0 -1px 12px 2px ${liveKeyColors[key.value]}` : 'none'
                       }"
                     ></div>
                   </div>

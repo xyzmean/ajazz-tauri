@@ -594,59 +594,133 @@ input:checked + .slider:before {
   background: rgba(10, 11, 22, 0.85);
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 16px;
-  padding: 16px;
+  padding: 24px;
   box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6), inset 0 1px 1px rgba(255, 255, 255, 0.1);
   backdrop-filter: blur(20px);
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   width: 100%;
-  max-width: 960px;
+  max-width: 100%;
   margin: 0 auto;
+  overflow-x: auto;
 }
 
 .keyboard-row {
   display: flex;
-  gap: 5px;
-  justify-content: center;
+  gap: 8px;
+  justify-content: flex-start;
+  align-items: flex-start;
+  width: 100%;
+  min-width: 1250px; /* Guarantees stable horizontal spacing so ml-auto acts as cluster separators */
 }
 
-.key-cap {
-  flex: 0 0 auto;
-  height: 40px;
-  border-radius: 6px;
-  background: linear-gradient(180deg, #1f2335 0%, #151722 100%);
-  border: 1px solid rgba(255, 255, 255, 0.05);
-  box-shadow: 0 2px 4px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+/* Exact key styling & layout dimensions from AJAZZ AK980 Electron driver */
+.key-item {
+  position: relative;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: #a9b1d6;
-  text-transform: uppercase;
-  user-select: none;
-  position: relative;
+  gap: 4px;
+  word-break: break-all;
+  border-radius: 8px;
+  padding-left: 4px;
+  padding-right: 4px;
+  text-align: center;
+  line-height: 1.25;
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+  background-image: linear-gradient(to bottom right, rgba(255, 255, 255, 0.05) 0%, rgba(0, 0, 0, 0.1) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  box-shadow: 0 4px 8px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.08), inset 0 1px 0 rgba(255,255,255,0.15);
+  overflow: hidden;
+  height: 56px;
+  width: 56px;
+  flex: 0 0 auto;
+  user-select: none;
+  cursor: pointer;
 }
 
-.key-cap:hover {
-  border-color: rgba(255, 255, 255, 0.15);
+.key-item:hover {
+  border-color: rgba(255, 255, 255, 0.18);
   filter: brightness(1.1);
+}
+
+.key-highlight-top {
+  position: absolute;
+  top: 0;
+  left: 4px;
+  right: 4px;
+  height: 1px;
+  background-image: linear-gradient(to right, transparent, rgba(255,255,255,0.15), transparent);
+  pointer-events: none;
+}
+
+.key-shadow-bottom {
+  position: absolute;
+  bottom: 0;
+  left: 4px;
+  right: 4px;
+  height: 1px;
+  background-image: linear-gradient(to right, transparent, rgba(0,0,0,0.3), transparent);
+  pointer-events: none;
+}
+
+.key-content {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.key-label {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
 }
 
 /* Neon Backlight Projection on the virtual keys */
 .key-cap-led {
   position: absolute;
-  bottom: 4px;
-  width: 12px;
+  bottom: 6px;
+  width: 16px;
   height: 4px;
   border-radius: 2px;
   background: transparent;
   box-shadow: none;
   transition: background-color 0.1s ease, box-shadow 0.1s ease;
 }
+
+/* Width utilities */
+.w-14 { width: 56px; }
+.w-18 { width: 72px; }
+.w-22 { width: 88px; }
+.w-23 { width: 92px; }
+.w-25 { width: 100px; }
+.w-27 { width: 108px; }
+.w-29 { width: 116px; }
+.w-30 { width: 120px; }
+.w-33 { width: 132px; }
+.w-34 { width: 136px; }
+.flex-1 { flex: 1 1 0%; min-width: 120px; } /* Spacebar scales dynamically */
+
+/* Height utilities */
+.h-14 { height: 56px; }
+.h-30 { height: 120px; z-index: 10; } /* Keep double height keys visible and overlapping */
+
+/* Margin utilities */
+.ml-15 { margin-left: 60px; }
+.mr-15 { margin-right: 60px; }
+.ml-5 { margin-left: 20px; }
+.mr-5 { margin-right: 20px; }
+.mr-20 { margin-right: 80px; }
+.mt--15 { margin-top: -60px; }
+.ml-auto { margin-left: auto; }
+.mr-auto { margin-right: auto; }
 
 /* Equalizer Bars Container */
 .eq-bars {
