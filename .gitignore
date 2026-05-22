@@ -11,6 +11,12 @@ node_modules/
 /reverse-source/dist-web/
 /reverse-source/dist-pkg/
 
+# Tauri app
+/tauri-app/node_modules/
+/tauri-app/dist/
+/tauri-app/src-tauri/target/
+/tauri-app/src-tauri/gen/
+
 # Logs / misc
 *.log
 .DS_Store
