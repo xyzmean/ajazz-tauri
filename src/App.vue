@@ -401,6 +401,7 @@ const gifFrames = ref<any[]>([]);
 const activeGifFrameIndex = ref(0);
 const uploadedGifName = ref<string | null>(null);
 const fileInput = ref<HTMLInputElement | null>(null);
+const gifScaleMode = ref("cover"); // "cover" or "contain"
 let gifTimeout: any = null;
 
 const hex = (n: number) => "0x" + n.toString(16).padStart(4, "0");
@@ -838,28 +839,48 @@ async function playNextGifFrame() {
     const u = key.x / 19.5;
     const v = key.y / 5;
     
-    let u_mapped, v_mapped;
-    if (AR_gif > AR_kb) {
-      // GIF is wider than keyboard: crop left/right sides (fill completely)
-      const scale = AR_kb / AR_gif;
-      u_mapped = (u - 0.5) * scale + 0.5;
-      v_mapped = v;
+    let u_mapped, v_mapped, in_bounds = true;
+    
+    if (gifScaleMode.value === "contain") {
+      // Contain: Fit entire GIF inside keyboard grid, pad out-of-bounds keys
+      if (AR_gif > AR_kb) {
+        const scale = AR_gif / AR_kb;
+        u_mapped = u;
+        v_mapped = (v - 0.5) * scale + 0.5;
+        in_bounds = v_mapped >= 0 && v_mapped <= 1;
+      } else {
+        const scale = AR_kb / AR_gif;
+        u_mapped = (u - 0.5) * scale + 0.5;
+        v_mapped = v;
+        in_bounds = u_mapped >= 0 && u_mapped <= 1;
+      }
     } else {
-      // GIF is narrower than keyboard: crop top/bottom (fill completely)
-      const scale = AR_gif / AR_kb;
-      u_mapped = u;
-      v_mapped = (v - 0.5) * scale + 0.5;
+      // Cover: Zoom and crop to fill 100% of keys
+      if (AR_gif > AR_kb) {
+        const scale = AR_kb / AR_gif;
+        u_mapped = (u - 0.5) * scale + 0.5;
+        v_mapped = v;
+      } else {
+        const scale = AR_gif / AR_kb;
+        u_mapped = u;
+        v_mapped = (v - 0.5) * scale + 0.5;
+      }
     }
     
-    const px = Math.min(w - 1, Math.max(0, Math.round(u_mapped * (w - 1))));
-    const py = Math.min(h - 1, Math.max(0, Math.round(v_mapped * (h - 1))));
-    
-    const offset = (py * w + px) * 4;
-    const r = pixels[offset];
-    const g = pixels[offset + 1];
-    const b = pixels[offset + 2];
-    
-    frame.push({ idx: key.idx, r, g, b });
+    if (in_bounds) {
+      const px = Math.min(w - 1, Math.max(0, Math.round(u_mapped * (w - 1))));
+      const py = Math.min(h - 1, Math.max(0, Math.round(v_mapped * (h - 1))));
+      
+      const offset = (py * w + px) * 4;
+      const r = pixels[offset];
+      const g = pixels[offset + 1];
+      const b = pixels[offset + 2];
+      
+      frame.push({ idx: key.idx, r, g, b });
+    } else {
+      // Ambient dark background padding for Contain mode
+      frame.push({ idx: key.idx, r: 12, g: 8, b: 24 });
+    }
   }
   
   await streamBacklight(frame);
@@ -1208,6 +1229,27 @@ onMounted(refresh);
                     <div class="dropzone-icon" style="color: var(--neon-pink);">👾</div>
                     <span v-if="!uploadedGifName" style="font-size: 12px; font-weight: 700; color: #fff;">Перетащите файл .gif или нажмите для выбора</span>
                     <span v-else style="font-size: 12px; font-weight: 700; color: var(--neon-pink); text-shadow: 0 0 10px rgba(255,0,127,0.2);">{{ uploadedGifName }}</span>
+                  </div>
+
+                  <!-- Scale Mode Selection -->
+                  <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 4px;">
+                    <span style="font-size: 11px; font-weight: 700; color: rgba(255,255,255,0.4); text-transform: uppercase; letter-spacing: 0.05em; text-align: left;">Режим масштабирования:</span>
+                    <div style="display: flex; gap: 4px; background: rgba(0,0,0,0.4); padding: 4px; border-radius: 8px; border: 1px solid rgba(255,0,127,0.15);">
+                      <button 
+                        @click="gifScaleMode = 'cover'"
+                        style="flex: 1; font-size: 11px; padding: 6px; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; transition: all 0.2s ease; outline: none;"
+                        :style="gifScaleMode === 'cover' ? { background: 'var(--neon-pink)', color: '#fff', boxShadow: '0 0 10px rgba(255,0,127,0.4)' } : { background: 'transparent', color: 'rgba(255,255,255,0.6)' }"
+                      >
+                        С обрезкой (Cover)
+                      </button>
+                      <button 
+                        @click="gifScaleMode = 'contain'"
+                        style="flex: 1; font-size: 11px; padding: 6px; font-weight: 700; border: none; border-radius: 6px; cursor: pointer; transition: all 0.2s ease; outline: none;"
+                        :style="gifScaleMode === 'contain' ? { background: 'var(--neon-pink)', color: '#fff', boxShadow: '0 0 10px rgba(255,0,127,0.4)' } : { background: 'transparent', color: 'rgba(255,255,255,0.6)' }"
+                      >
+                        С полями (Contain)
+                      </button>
+                    </div>
                   </div>
 
                   <div style="display: flex; gap: 10px; margin-top: 10px;" v-if="gifFrames.length > 0">
