@@ -15,3 +15,7 @@ node_modules/
 *.log
 .DS_Store
 *.err
+
+# Reverse engineering and scratch files
+/scratch/
+
