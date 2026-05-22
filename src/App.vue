@@ -838,33 +838,28 @@ async function playNextGifFrame() {
     const u = key.x / 19.5;
     const v = key.y / 5;
     
-    let u_mapped, v_mapped, in_bounds;
+    let u_mapped, v_mapped;
     if (AR_gif > AR_kb) {
-      const scale = AR_gif / AR_kb;
-      u_mapped = u;
-      v_mapped = (v - 0.5) * scale + 0.5;
-      in_bounds = v_mapped >= 0 && v_mapped <= 1;
-    } else {
+      // GIF is wider than keyboard: crop left/right sides (fill completely)
       const scale = AR_kb / AR_gif;
       u_mapped = (u - 0.5) * scale + 0.5;
       v_mapped = v;
-      in_bounds = u_mapped >= 0 && u_mapped <= 1;
+    } else {
+      // GIF is narrower than keyboard: crop top/bottom (fill completely)
+      const scale = AR_gif / AR_kb;
+      u_mapped = u;
+      v_mapped = (v - 0.5) * scale + 0.5;
     }
     
-    if (in_bounds) {
-      const px = Math.min(w - 1, Math.max(0, Math.round(u_mapped * (w - 1))));
-      const py = Math.min(h - 1, Math.max(0, Math.round(v_mapped * (h - 1))));
-      
-      const offset = (py * w + px) * 4;
-      const r = pixels[offset];
-      const g = pixels[offset + 1];
-      const b = pixels[offset + 2];
-      
-      frame.push({ idx: key.idx, r, g, b });
-    } else {
-      // Ambient dark background padding
-      frame.push({ idx: key.idx, r: 12, g: 8, b: 24 });
-    }
+    const px = Math.min(w - 1, Math.max(0, Math.round(u_mapped * (w - 1))));
+    const py = Math.min(h - 1, Math.max(0, Math.round(v_mapped * (h - 1))));
+    
+    const offset = (py * w + px) * 4;
+    const r = pixels[offset];
+    const g = pixels[offset + 1];
+    const b = pixels[offset + 2];
+    
+    frame.push({ idx: key.idx, r, g, b });
   }
   
   await streamBacklight(frame);
