@@ -89,3 +89,31 @@ export const setLedEffect = (path: string, config: LedEffect) =>
 export const factoryReset = (path: string, resetType: number) =>
   invoke<void>("factory_reset", { path, resetType });
 
+export interface LedColor {
+  idx: number;
+  r: number;
+  g: number;
+  b: number;
+}
+
+/** Stream real-time RGB frame to the backlight key matrix. */
+export const streamLedFrame = (path: string, frame: LedColor[]) =>
+  invoke<void>("stream_led_frame", { path, frame });
+
+/** Send native real-time audio spectrum amplitude packets. */
+export const sendMusicData = (
+  path: string,
+  mode: number,
+  speed: number,
+  brightness: number,
+  amplitudes: number[]
+) => invoke<void>("send_music_data", { path, mode, speed, brightness, amplitudes });
+
+/** Upload animated gif delays and frame buffers to LCD screen storage. */
+export const uploadLcdAnimation = (
+  path: string,
+  delays: number[],
+  rgb565Buffer: number[]
+) => invoke<void>("upload_lcd_animation", { path, delays, rgb565Buffer });
+
+

@@ -307,3 +307,125 @@ pub fn factory_reset(device: &HidDevice, reset_type: u8) -> Result<(), String> {
     std::thread::sleep(std::time::Duration::from_millis(100));
     Ok(())
 }
+
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LedColor {
+    pub idx: u8,
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+pub fn stream_led_frame(device: &HidDevice, frame: Vec<LedColor>) -> Result<(), String> {
+    let chunk_size = 24;
+    let mut payload = Vec::with_capacity(frame.len() * 4);
+    for k in frame {
+        payload.push(k.idx);
+        payload.push(k.r);
+        payload.push(k.g);
+        payload.push(k.b);
+    }
+    
+    let content_size = payload.len();
+    let packet_count = content_size.div_ceil(chunk_size);
+    
+    for i in 0..packet_count {
+        let addr = (i * chunk_size) as u16;
+        let from = i * chunk_size;
+        let to = (from + chunk_size).min(content_size);
+        let chunk = &payload[from..to];
+        let len = chunk.len() as u8;
+        let last = i == packet_count - 1;
+        
+        let packet = build_packet(50, len, addr, Some(chunk), last);
+        send(device, &packet)?;
+        let _resp = recv(device, 50, 50)?;
+    }
+    Ok(())
+}
+
+pub fn send_music_data(
+    device: &HidDevice,
+    mode: u8,
+    speed: u8,
+    brightness: u8,
+    amplitudes: &[u8],
+) -> Result<(), String> {
+    let mut buf = [0u8; 32];
+    buf[0] = 0xAA;
+    buf[1] = 53; // SET_MUSIC_DATA
+    buf[2] = 0;  // Wired USB marker
+    buf[3] = mode;
+    buf[4] = speed;
+    buf[5] = brightness;
+    
+    let n = amplitudes.len().min(21);
+    buf[6..6 + n].copy_from_slice(&amplitudes[..n]);
+    
+    let mut sum: u32 = 0;
+    for i in 0..31 {
+        sum += buf[i] as u32;
+    }
+    buf[31] = (sum & 0xFF) as u8;
+    
+    let mut out = [0u8; 33];
+    out[0] = REPORT_ID;
+    out[1..].copy_from_slice(&buf);
+    
+    device.write(&out).map_err(|e| format!("music write failed: {e}"))?;
+    Ok(())
+}
+
+pub fn upload_lcd_animation(
+    device: &HidDevice,
+    delays: Vec<u8>,
+    rgb565_buffer: Vec<u8>,
+) -> Result<(), String> {
+    let num_frames = delays.len();
+    if num_frames == 0 {
+        return Err("No frames to upload".to_string());
+    }
+    
+    let mut header = [255u8; 256];
+    header[0] = num_frames as u8;
+    for i in 0..(num_frames - 1).min(255) {
+        header[i + 1] = delays[i].saturating_mul(5);
+    }
+    header[num_frames] = 0;
+    
+    let mut full_buffer = Vec::with_capacity(256 + rgb565_buffer.len());
+    full_buffer.extend_from_slice(&header);
+    full_buffer.extend_from_slice(&rgb565_buffer);
+    
+    let chunk_size = 4096;
+    let content_size = full_buffer.len();
+    let total_chunks = content_size.div_ceil(chunk_size) as u16;
+    
+    for i in 0..total_chunks {
+        let from = i as usize * chunk_size;
+        let to = (from + chunk_size).min(content_size);
+        let chunk = &full_buffer[from..to];
+        
+        let mut large_report = vec![0u8; 8 + chunk_size];
+        large_report[0] = 170;
+        large_report[1] = 80; // SET_TFT_USER_ANIMATION
+        large_report[2] = (i & 0xFF) as u8;
+        large_report[3] = ((i >> 8) & 0xFF) as u8;
+        large_report[4] = (total_chunks & 0xFF) as u8;
+        large_report[5] = ((total_chunks >> 8) & 0xFF) as u8;
+        large_report[6] = 0x50; // address offset low: 0x50
+        large_report[7] = 0x06; // address offset high: 0x06
+        
+        large_report[8..8 + chunk.len()].copy_from_slice(chunk);
+        
+        let mut write_buf = vec![0u8; 8 + chunk_size + 1];
+        write_buf[0] = REPORT_ID;
+        write_buf[1..].copy_from_slice(&large_report);
+        
+        device.write(&write_buf).map_err(|e| format!("TFT write failed at chunk {i}: {e}"))?;
+        let _resp = recv(device, 65, 2000)?;
+    }
+    Ok(())
+}
+

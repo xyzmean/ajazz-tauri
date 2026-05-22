@@ -11,7 +11,10 @@ pub fn run() {
     let api = HidApi::new().expect("failed to initialize hidapi");
 
     tauri::Builder::default()
-        .manage(AppState { api: Mutex::new(api) })
+        .manage(AppState {
+            api: Mutex::new(api),
+            cached_device: Mutex::new(None),
+        })
         .invoke_handler(tauri::generate_handler![
             commands::list_devices,
             commands::get_device_info,
@@ -19,7 +22,10 @@ pub fn run() {
             commands::set_game_mode,
             commands::get_led_effect,
             commands::set_led_effect,
-            commands::factory_reset
+            commands::factory_reset,
+            commands::stream_led_frame,
+            commands::send_music_data,
+            commands::upload_lcd_animation
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
