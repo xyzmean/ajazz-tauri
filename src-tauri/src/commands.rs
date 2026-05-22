@@ -47,73 +47,122 @@ where
     result
 }
 
-/// List connected keyboards on our HID usage page (or any known model).
-/// Performs an active handshake check to filter out non-writable duplicate interfaces on Windows.
+/// One enumerated vendor HID interface (before grouping into physical keyboards).
+struct Candidate {
+    path: String,
+    vid: u16,
+    pid: u16,
+    usage_page: u16,
+    usage: u16,
+    product: Option<String>,
+    manufacturer: Option<String>,
+}
+
+/// List connected keyboards on our vendor HID usage page.
+///
+/// On Windows a single keyboard exposes several HID interfaces, so we de-duplicate by
+/// (vendorId, productId) — one entry per physical board. Within each group we *prefer* the
+/// interface that answers our protocol handshake, but if none answers (device busy, or the
+/// collection layout differs from what we expect) we still surface the first candidate as a
+/// fallback. This is deliberate: an over-strict filter previously dropped every device.
 #[tauri::command]
 pub fn list_devices(state: tauri::State<AppState>) -> Result<Vec<DeviceSummary>, String> {
     let mut api = state.api.lock().map_err(|e| e.to_string())?;
     api.refresh_devices().map_err(|e| e.to_string())?;
 
+    // Pass 1: collect every interface on the vendor usage page (0xFF67 / 0xFF68).
     let mut seen = HashSet::new();
-    let mut out = Vec::new();
+    let mut cands: Vec<Candidate> = Vec::new();
     for d in api.device_list() {
-        let vid = d.vendor_id();
-        let pid = d.product_id();
-        let model = models::find(vid, pid);
-        // Only target the vendor-defined custom HID interface (UsagePage 0xFF67 or 0xFF68)
         let is_custom_hid = d.usage_page() == 0xFF67 || d.usage_page() == 0xFF68;
         if !is_custom_hid {
-            continue;
-        }
-        // Under Windows, we often get multiple entries for the same keyboard.
-        // The correct vendor custom control collection always has usage == 1.
-        #[cfg(target_os = "windows")]
-        if d.usage() != 1 {
             continue;
         }
         let path = d.path().to_string_lossy().into_owned();
         if !seen.insert(path.clone()) {
             continue;
         }
+        cands.push(Candidate {
+            path,
+            vid: d.vendor_id(),
+            pid: d.product_id(),
+            usage_page: d.usage_page(),
+            usage: d.usage(),
+            product: d.product_string().map(str::to_owned),
+            manufacturer: d.manufacturer_string().map(str::to_owned),
+        });
+    }
 
-        // Active Handshake Validation:
-        // We open the device and perform a test query to verify it is writable and responsive.
-        // If the device is currently already in our connection cache, we skip reopening it.
-        let is_cached = {
-            if let Ok(cached) = state.cached_device.lock() {
-                if let Some((cached_path, _)) = &*cached {
-                    cached_path == &path
-                } else {
-                    false
+    eprintln!(
+        "[list_devices] {} candidate interface(s) on vendor usage page",
+        cands.len()
+    );
+    for c in &cands {
+        eprintln!(
+            "  vid={:04x} pid={:04x} usage_page={:04x} usage={:#x} path={}",
+            c.vid, c.pid, c.usage_page, c.usage, c.path
+        );
+    }
+
+    // Pass 2: group by (vid, pid) = one physical keyboard, then pick the best interface.
+    let cached_path = state
+        .cached_device
+        .lock()
+        .ok()
+        .and_then(|c| c.as_ref().map(|(p, _)| p.clone()));
+
+    let mut groups: Vec<(u16, u16)> = Vec::new();
+    for c in &cands {
+        if !groups.contains(&(c.vid, c.pid)) {
+            groups.push((c.vid, c.pid));
+        }
+    }
+
+    let mut out = Vec::new();
+    for (vid, pid) in groups {
+        let group: Vec<&Candidate> =
+            cands.iter().filter(|c| c.vid == vid && c.pid == pid).collect();
+
+        // Prefer: (a) the interface we already hold open, then (b) one that answers the handshake.
+        let mut chosen: Option<&Candidate> = group
+            .iter()
+            .find(|c| cached_path.as_deref() == Some(c.path.as_str()))
+            .copied();
+
+        if chosen.is_none() {
+            for c in &group {
+                if let Ok(cp) = std::ffi::CString::new(c.path.clone()) {
+                    if let Ok(device) = api.open_path(&cp) {
+                        if protocol::get_device_info(&device).is_ok() {
+                            chosen = Some(c);
+                            break;
+                        }
+                    }
                 }
-            } else {
-                false
-            }
-        };
-
-        if !is_cached {
-            let cpath = match std::ffi::CString::new(path.clone()) {
-                Ok(cp) => cp,
-                Err(_) => continue,
-            };
-            let is_valid = match api.open_path(&cpath) {
-                Ok(device) => protocol::get_device_info(&device).is_ok(),
-                Err(_) => false,
-            };
-            if !is_valid {
-                continue;
             }
         }
 
+        // Fallback: never drop a keyboard just because the handshake didn't land.
+        let pick = chosen.unwrap_or(group[0]);
+        if chosen.is_none() {
+            eprintln!(
+                "[list_devices] vid={vid:04x} pid={pid:04x}: no interface answered handshake; \
+                 surfacing {} as fallback",
+                pick.path
+            );
+        }
+
         out.push(DeviceSummary {
-            path,
+            path: pick.path.clone(),
             vendor_id: vid,
             product_id: pid,
-            product: d.product_string().map(str::to_owned),
-            manufacturer: d.manufacturer_string().map(str::to_owned),
-            model_name: model,
+            product: pick.product.clone(),
+            manufacturer: pick.manufacturer.clone(),
+            model_name: models::find(vid, pid),
         });
     }
+
+    eprintln!("[list_devices] returning {} keyboard(s)", out.len());
     Ok(out)
 }
 
