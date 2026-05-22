@@ -8,6 +8,9 @@ node_modules/
 /src-tauri/target/
 /src-tauri/gen/
 
+# Background helper sidecar, staged with a target-triple suffix by CI before bundling
+/src-tauri/binaries/
+
 # Pulled from the reverse branch at build time (see .reverse-rev)
 /.reverse-src/
 

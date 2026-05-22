@@ -13,7 +13,15 @@
 //! Backlight matrix: 16 columns × 6 rows, LED index = row*16 + col (hardware-confirmed). Capture is
 //! sampled on that uniform grid; cells without a physical LED simply do nothing.
 
-use ajazz_tauri_driver_lib::{helper_config, protocol};
+// The helper is headless and must NOT pull in `tauri` (and its GTK/WebKit system deps): it depends
+// only on the pure-Rust protocol + config modules, included directly rather than via the GUI lib.
+#[allow(dead_code)]
+#[path = "../protocol.rs"]
+mod protocol;
+#[allow(dead_code)]
+#[path = "../helper_config.rs"]
+mod helper_config;
+
 use hidapi::{HidApi, HidDevice};
 use protocol::LedColor;
 use std::time::Duration;
