@@ -123,6 +123,23 @@ export const sendMusicData = (
   amplitudes: number[]
 ) => invoke<void>("send_music_data", { path, mode, speed, brightness, amplitudes });
 
+// --- Background helper (ajazz-helperd): runs independent of the GUI, autostarts at logon ---
+export interface HelperConfig {
+  mode: string; // "off" | "screen" | "gif"
+  devicePath: string | null;
+  gifPath: string | null;
+  fps: number;
+}
+/** Read the background helper's current config. */
+export const getHelperConfig = () => invoke<HelperConfig>("get_helper_config");
+/** Write the background helper's config (it polls this and switches behaviour). */
+export const setHelperConfig = (config: HelperConfig) =>
+  invoke<void>("set_helper_config", { config });
+/** Register the helper to start at logon and launch it now. */
+export const installHelperAutostart = () => invoke<void>("install_helper_autostart");
+/** Remove the helper from logon autostart. */
+export const uninstallHelperAutostart = () => invoke<void>("uninstall_helper_autostart");
+
 /** Upload animated gif delays and frame buffers to LCD screen storage. */
 export const uploadLcdAnimation = (
   path: string,

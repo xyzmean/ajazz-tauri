@@ -12,6 +12,10 @@ import {
   pushLedFrame,
   stopLedStream,
   sendMusicData,
+  getHelperConfig,
+  setHelperConfig,
+  installHelperAutostart,
+  uninstallHelperAutostart,
   type DeviceSummary, 
   type DeviceInfo,
   type GameMode,
@@ -863,7 +867,65 @@ const lightModes = [
   { value: 128, label: "Своя подсветка (Custom)" }
 ];
 
-onMounted(refresh);
+// --- Background helper (ajazz-helperd) control ---
+const helperMode = ref<string>("off");
+const helperGifPath = ref<string>("");
+const helperFps = ref<number>(30);
+
+async function pushHelperConfig() {
+  try {
+    await setHelperConfig({
+      mode: helperMode.value,
+      devicePath: selected.value?.path ?? null,
+      gifPath: helperGifPath.value || null,
+      fps: helperFps.value || 30,
+    });
+  } catch (e) {
+    error.value = "Не удалось записать конфиг фонового сервиса: " + String(e);
+  }
+}
+
+async function setHelperMode(mode: string) {
+  // The background helper drives the device; stop any in-app streaming first to avoid contention.
+  if (mode !== "off") {
+    stopAmbientSync();
+    stopGifPlayback();
+  }
+  helperMode.value = mode;
+  await pushHelperConfig();
+  if (mode !== "off") {
+    triggerSuccess(mode === "screen" ? "Фоновый стрим экрана включён!" : "Фоновое воспроизведение GIF включено!");
+  }
+}
+
+async function enableAutostart() {
+  try {
+    await pushHelperConfig();
+    await installHelperAutostart();
+    triggerSuccess("Автозапуск фонового сервиса включён.");
+  } catch (e) {
+    error.value = "Не удалось включить автозапуск: " + String(e);
+  }
+}
+
+async function disableAutostart() {
+  try {
+    await uninstallHelperAutostart();
+    triggerSuccess("Автозапуск отключён.");
+  } catch (e) {
+    error.value = "Не удалось отключить автозапуск: " + String(e);
+  }
+}
+
+onMounted(async () => {
+  await refresh();
+  try {
+    const cfg = await getHelperConfig();
+    helperMode.value = cfg.mode;
+    helperGifPath.value = cfg.gifPath ?? "";
+    helperFps.value = cfg.fps || 30;
+  } catch { /* helper config optional */ }
+});
 </script>
 
 <template>
@@ -942,6 +1004,7 @@ onMounted(refresh);
             
             <button class="tab-btn" :class="{ active: activeTab === 'performance' }" @click="switchTab('performance')" :disabled="!gameMode">Rapid Trigger</button>
             <button class="tab-btn" :class="{ active: activeTab === 'maintenance' }" @click="switchTab('maintenance')">Обслуживание</button>
+            <button class="tab-btn" :class="{ active: activeTab === 'background' }" @click="switchTab('background')" style="color: var(--neon-green);">Фоновый сервис</button>
           </nav>
 
           <!-- Core custom content window -->
@@ -1078,6 +1141,52 @@ onMounted(refresh);
                     <span style="font-size: 10px; color: var(--muted); font-family: ui-monospace, monospace;">~25-30 кадров/сек</span>
                   </div>
                 </div>
+              </div>
+            </div>
+
+            <!-- 3b. Background service (helper daemon, runs without the app open) -->
+            <div v-else-if="activeTab === 'background'" style="display: flex; flex-direction: column; gap: 16px;" class="card-neon-cyan">
+              <span style="font-size: 13px; color: var(--text-bright); line-height: 1.5;">
+                Фоновый сервис стримит экран или GIF на клавиатуру <b>даже когда это приложение закрыто</b>.
+                Он запускается при входе в Windows и работает независимо от GUI.
+              </span>
+              <div style="font-size: 11px; color: var(--muted);">
+                Захват экрана — только Windows. Пока фоновый режим активен, не включайте эмбиент/GIF здесь же —
+                клавиатурой управляет один процесс.
+              </div>
+
+              <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                <button class="btn" :class="{ 'btn-secondary': helperMode !== 'screen' }"
+                        @click="setHelperMode('screen')"
+                        :style="helperMode === 'screen' ? 'background: var(--neon-green); color:#000; font-weight:800;' : ''">
+                  Экран → клавиатура
+                </button>
+                <button class="btn" :class="{ 'btn-secondary': helperMode !== 'gif' }"
+                        @click="setHelperMode('gif')"
+                        :style="helperMode === 'gif' ? 'background: var(--neon-green); color:#000; font-weight:800;' : ''">
+                  GIF (зациклить)
+                </button>
+                <button class="btn btn-danger" v-if="helperMode !== 'off'" @click="setHelperMode('off')">
+                  Остановить фон
+                </button>
+              </div>
+
+              <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;">
+                Путь к GIF-файлу (для режима GIF):
+                <input v-model="helperGifPath" type="text" placeholder="C:\\path\\to\\anim.gif"
+                       style="padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); color: var(--text-bright);" />
+              </label>
+
+              <div style="display: flex; align-items: center; gap: 10px; font-size: 12px;">
+                <span>Кадр/сек:</span>
+                <input v-model.number="helperFps" type="number" min="5" max="60"
+                       style="width: 70px; padding: 6px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); color: var(--text-bright);" />
+                <span style="font-size: 11px; color: var(--muted);">статус: <b :style="{ color: helperMode === 'off' ? 'var(--neon-pink)' : 'var(--neon-green)' }">{{ helperMode === 'off' ? 'ВЫКЛ' : helperMode.toUpperCase() }}</b></span>
+              </div>
+
+              <div style="display: flex; gap: 10px; margin-top: 6px;">
+                <button class="btn btn-secondary" @click="enableAutostart">Включить автозапуск при входе</button>
+                <button class="btn btn-secondary" @click="disableAutostart">Отключить автозапуск</button>
               </div>
             </div>
 

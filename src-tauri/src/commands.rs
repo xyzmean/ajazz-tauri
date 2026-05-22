@@ -1,5 +1,6 @@
 //! Tauri commands — the IPC surface the Vue frontend calls via invoke().
 
+use crate::helper_config::{self, HelperConfig};
 use crate::{models, protocol};
 use hidapi::HidApi;
 use std::collections::HashSet;
@@ -360,6 +361,54 @@ pub fn stop_led_stream(state: tauri::State<AppState>) -> Result<(), String> {
         let _ = h.join();
     }
     *state.led_stream.latest.lock().map_err(|e| e.to_string())? = None;
+    Ok(())
+}
+
+// ── Background helper (ajazz-helperd) control ────────────────────────────────────────────────
+
+/// Read the current background-helper config.
+#[tauri::command]
+pub fn get_helper_config() -> HelperConfig {
+    helper_config::load()
+}
+
+/// Write the background-helper config (mode = off|screen|gif, gif path, device, fps).
+/// The running helper polls this file and switches behaviour accordingly.
+#[tauri::command]
+pub fn set_helper_config(config: HelperConfig) -> Result<(), String> {
+    helper_config::save(&config).map_err(|e| e.to_string())
+}
+
+/// Locate the `ajazz-helperd` binary that ships alongside the GUI executable.
+fn helperd_path() -> Option<std::path::PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    let name = if cfg!(windows) { "ajazz-helperd.exe" } else { "ajazz-helperd" };
+    Some(dir.join(name))
+}
+
+/// Register the helper to start at logon and launch it now.
+#[tauri::command]
+pub fn install_helper_autostart() -> Result<(), String> {
+    let p = helperd_path().ok_or("helper binary not found next to the app")?;
+    std::process::Command::new(&p)
+        .arg("--install")
+        .status()
+        .map_err(|e| format!("--install failed: {e}"))?;
+    std::process::Command::new(&p)
+        .spawn()
+        .map_err(|e| format!("launch failed: {e}"))?;
+    Ok(())
+}
+
+/// Unregister the helper from logon autostart.
+#[tauri::command]
+pub fn uninstall_helper_autostart() -> Result<(), String> {
+    let p = helperd_path().ok_or("helper binary not found next to the app")?;
+    std::process::Command::new(&p)
+        .arg("--uninstall")
+        .status()
+        .map_err(|e| format!("--uninstall failed: {e}"))?;
     Ok(())
 }
 

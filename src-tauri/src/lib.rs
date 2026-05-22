@@ -1,6 +1,7 @@
 mod commands;
+pub mod helper_config;
 mod models;
-mod protocol;
+pub mod protocol;
 
 use commands::{AppState, LedStreamDaemon};
 use hidapi::HidApi;
@@ -30,7 +31,11 @@ pub fn run() {
             commands::start_led_stream,
             commands::push_led_frame,
             commands::stop_led_stream,
-            commands::enter_custom_mode
+            commands::enter_custom_mode,
+            commands::get_helper_config,
+            commands::set_helper_config,
+            commands::install_helper_autostart,
+            commands::uninstall_helper_autostart
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
