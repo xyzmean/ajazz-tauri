@@ -3,7 +3,7 @@ name: Build Tauri Driver
 on:
   push:
     branches:
-      - tauri
+      - dev-tauri
   workflow_dispatch:
 
 jobs:
@@ -14,8 +14,33 @@ jobs:
       contents: write
 
     steps:
-      - name: Checkout repository
+      - name: Checkout dev-tauri
         uses: actions/checkout@v4
+
+      - name: Read pinned reverse commit
+        id: rev
+        shell: bash
+        run: echo "sha=$(tr -d '[:space:]' < .reverse-rev)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout reverse branch at pinned commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.rev.outputs.sha }}
+          path: .reverse-src
+
+      - name: Sync canonical model table from reverse
+        shell: bash
+        run: |
+          set -e
+          src=".reverse-src/models.json"
+          dst="src-tauri/models.json"
+          if [ ! -f "$src" ]; then
+            echo "::error::models.json not found in reverse@${{ steps.rev.outputs.sha }}"
+            exit 1
+          fi
+          cp "$src" "$dst"
+          echo "Synced $dst from reverse@${{ steps.rev.outputs.sha }}"
+          git --no-pager diff --stat -- "$dst" || true
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -26,7 +51,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install frontend dependencies
-        working-directory: tauri-app
         run: npm install
 
       - name: Compute release tag (tauri-YYMMDD-HHMM, UTC)
@@ -39,7 +63,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          projectPath: tauri-app
+          projectPath: .
           tagName: ${{ steps.tag.outputs.tag }}
           releaseName: ${{ steps.tag.outputs.tag }}
           prerelease: true
+          releaseBody: "Reverse protocol pinned at reverse@${{ steps.rev.outputs.sha }}"

@@ -1,4 +1,4 @@
-//! Reverse-engineered Ajazz HID protocol — Rust port of reverse-source/src/protocol/core.ts.
+//! Reverse-engineered Ajazz HID protocol — Rust port of the `reverse` branch's src/protocol/core.ts.
 //!
 //! Wire format (see core.ts for the full spec):
 //!   Request packet (32 bytes, sent with report id 0):
