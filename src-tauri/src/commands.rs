@@ -32,7 +32,9 @@ pub fn list_devices(state: tauri::State<AppState>) -> Result<Vec<DeviceSummary>,
         let vid = d.vendor_id();
         let pid = d.product_id();
         let model = models::find(vid, pid);
-        if d.usage_page() != protocol::USAGE_PAGE && model.is_none() {
+        // Only target the vendor-defined custom HID interface (UsagePage 0xFF67 or 0xFF68)
+        let is_custom_hid = d.usage_page() == 0xFF67 || d.usage_page() == 0xFF68;
+        if !is_custom_hid {
             continue;
         }
         let path = d.path().to_string_lossy().into_owned();
@@ -62,3 +64,70 @@ pub fn get_device_info(
     let device = api.open_path(&cpath).map_err(|e| format!("open failed: {e}"))?;
     protocol::get_device_info(&device)
 }
+
+/// Read game mode / performance settings.
+#[tauri::command]
+pub fn get_game_mode(
+    state: tauri::State<AppState>,
+    path: String,
+    frame_version: u8,
+) -> Result<protocol::GameMode, String> {
+    let api = state.api.lock().map_err(|e| e.to_string())?;
+    let cpath = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+    let device = api.open_path(&cpath).map_err(|e| format!("open failed: {e}"))?;
+    protocol::get_game_mode(&device, frame_version)
+}
+
+/// Save game mode / performance settings.
+#[tauri::command]
+pub fn set_game_mode(
+    state: tauri::State<AppState>,
+    path: String,
+    config: protocol::GameMode,
+    frame_version: u8,
+) -> Result<(), String> {
+    let api = state.api.lock().map_err(|e| e.to_string())?;
+    let cpath = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+    let device = api.open_path(&cpath).map_err(|e| format!("open failed: {e}"))?;
+    protocol::set_game_mode(&device, &config, frame_version)
+}
+
+/// Read current lighting / LED effect settings.
+#[tauri::command]
+pub fn get_led_effect(
+    state: tauri::State<AppState>,
+    path: String,
+    frame_version: u8,
+) -> Result<protocol::LedEffect, String> {
+    let api = state.api.lock().map_err(|e| e.to_string())?;
+    let cpath = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+    let device = api.open_path(&cpath).map_err(|e| format!("open failed: {e}"))?;
+    protocol::get_led_effect(&device, frame_version)
+}
+
+/// Save lighting / LED effect settings.
+#[tauri::command]
+pub fn set_led_effect(
+    state: tauri::State<AppState>,
+    path: String,
+    config: protocol::LedEffect,
+) -> Result<(), String> {
+    let api = state.api.lock().map_err(|e| e.to_string())?;
+    let cpath = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+    let device = api.open_path(&cpath).map_err(|e| format!("open failed: {e}"))?;
+    protocol::set_led_effect(&device, &config)
+}
+
+/// Execute a factory reset or calibration clear.
+#[tauri::command]
+pub fn factory_reset(
+    state: tauri::State<AppState>,
+    path: String,
+    reset_type: u8,
+) -> Result<(), String> {
+    let api = state.api.lock().map_err(|e| e.to_string())?;
+    let cpath = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+    let device = api.open_path(&cpath).map_err(|e| format!("open failed: {e}"))?;
+    protocol::factory_reset(&device, reset_type)
+}
+

@@ -9,13 +9,13 @@
 //! HID transport is done here in Rust (hidapi) because Tauri webviews have no WebHID.
 
 use hidapi::HidDevice;
+use serde::{Deserialize, Serialize};
 
 pub const REPORT_ID: u8 = 0;
 pub const REQUEST_HEADER: u8 = 0xAA;
 pub const RESPONSE_HEADER: u8 = 0x55;
 pub const HEADER_SIZE: usize = 8;
 pub const REPORT_SIZE: usize = 32;
-pub const USAGE_PAGE: u16 = 0xFF67;
 
 /// Command opcodes (subset of CMD from core.ts; extend as features are ported).
 #[allow(dead_code)] // several opcodes are placeholders for not-yet-ported features
@@ -137,4 +137,173 @@ pub fn parse_device_info(e: &[u8]) -> DeviceInfo {
 pub fn get_device_info(device: &HidDevice) -> Result<DeviceInfo, String> {
     let payload = read_data(device, cmd::GET_DEVICE_INFO, 48, 500)?;
     Ok(parse_device_info(&payload))
+}
+
+/// Chunked write transport. Sends `content_size` payload bytes from `data` split across packets,
+/// waiting for a response for each packet.
+pub fn write_data(
+    device: &HidDevice,
+    command: u8,
+    data: &[u8],
+    timeout_ms: i32,
+) -> Result<(), String> {
+    let per_packet = REPORT_SIZE - HEADER_SIZE; // 24
+    let content_size = data.len();
+    let packet_count = content_size.div_ceil(per_packet);
+
+    for i in 0..packet_count {
+        let addr = (i * per_packet) as u16;
+        let from = i * per_packet;
+        let to = (from + per_packet).min(content_size);
+        let chunk = &data[from..to];
+        let len = chunk.len() as u8;
+        let last = i == packet_count - 1;
+
+        let packet = build_packet(command, len, addr, Some(chunk), last);
+        send(device, &packet)?;
+        // Wait for response matching command
+        let _resp = recv(device, command, timeout_ms)?;
+    }
+    Ok(())
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GameMode {
+    pub game_mode: u8,
+    pub fn_switch: u8,
+    pub sleep_time: u8,
+    pub key_delay: u8,
+    pub report_rate: u8,
+    pub system_mode: u8,
+    pub tft_display_time: u8,
+    pub top_dead_zone: f32,
+    pub bottom_dead_zone: f32,
+    pub stability_mode: u8,
+    pub auto_calibration: u8,
+    pub single_key_wakeup: u8,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct LedEffect {
+    pub mode: u8,
+    pub red: u8,
+    pub green: u8,
+    pub blue: u8,
+    pub driver_setting: u8,
+    pub secondary_red: u8,
+    pub secondary_green: u8,
+    pub secondary_blue: u8,
+    pub color_mode: u8,
+    pub brightness: u8,
+    pub speed: u8,
+    pub direction: u8,
+    pub effect_mode_type: u8,
+    pub check_code_l: u8,
+    pub check_code_h: u8,
+}
+
+pub fn parse_game_mode(o: &[u8]) -> GameMode {
+    GameMode {
+        game_mode: o[1],
+        fn_switch: o[2],
+        sleep_time: o[3],
+        key_delay: o[4],
+        report_rate: o[5],
+        system_mode: o[6],
+        tft_display_time: o[7],
+        top_dead_zone: o[8] as f32 / 100.0,
+        bottom_dead_zone: o[9] as f32 / 100.0,
+        stability_mode: o[11],
+        auto_calibration: o[14],
+        single_key_wakeup: o[15],
+    }
+}
+
+pub fn encode_game_mode(v: &GameMode) -> Vec<u8> {
+    let mut e = vec![0u8; 56];
+    e[1] = v.game_mode;
+    e[2] = v.fn_switch;
+    e[3] = v.sleep_time;
+    e[4] = v.key_delay;
+    e[5] = v.report_rate;
+    e[6] = v.system_mode;
+    e[7] = v.tft_display_time;
+    e[8] = (v.top_dead_zone * 100.0).round() as u8;
+    e[9] = (v.bottom_dead_zone * 100.0).round() as u8;
+    e[11] = v.stability_mode;
+    e[14] = v.auto_calibration;
+    e[15] = v.single_key_wakeup;
+    e
+}
+
+pub fn parse_led_effect(o: &[u8]) -> LedEffect {
+    LedEffect {
+        mode: o[0],
+        red: o[1],
+        green: o[2],
+        blue: o[3],
+        driver_setting: o[4],
+        secondary_red: o[5],
+        secondary_green: o[6],
+        secondary_blue: o[7],
+        color_mode: o[8],
+        brightness: o[9],
+        speed: o[10],
+        direction: o[11],
+        effect_mode_type: o[12],
+        check_code_l: o[14],
+        check_code_h: o[15],
+    }
+}
+
+pub fn encode_led_effect(v: &LedEffect) -> Vec<u8> {
+    let mut e = vec![0u8; 16];
+    e[0] = v.mode;
+    e[1] = v.red;
+    e[2] = v.green;
+    e[3] = v.blue;
+    e[4] = 255; // driverSetting forced to 255 by upstream
+    e[5] = v.secondary_red;
+    e[6] = v.secondary_green;
+    e[7] = v.secondary_blue;
+    e[8] = v.color_mode;
+    e[9] = v.brightness;
+    e[10] = v.speed;
+    e[11] = v.direction;
+    e[12] = v.effect_mode_type;
+    e[14] = 170; // 0xAA validation check code L
+    e[15] = 85;  // 0x55 validation check code H
+    e
+}
+
+pub fn get_game_mode(device: &HidDevice, frame_version: u8) -> Result<GameMode, String> {
+    let timeout = if frame_version == 1 { 2000 } else { 500 };
+    let payload = read_data(device, cmd::GET_GAME_MODE, 56, timeout)?;
+    Ok(parse_game_mode(&payload))
+}
+
+pub fn set_game_mode(device: &HidDevice, config: &GameMode, frame_version: u8) -> Result<(), String> {
+    let timeout = if frame_version == 1 { 2000 } else { 500 };
+    let payload = encode_game_mode(config);
+    write_data(device, cmd::SET_GAME_MODE, &payload, timeout)
+}
+
+pub fn get_led_effect(device: &HidDevice, frame_version: u8) -> Result<LedEffect, String> {
+    let timeout = if frame_version == 1 { 2000 } else { 500 };
+    let payload = read_data(device, cmd::GET_LED_EFFECT, 16, timeout)?;
+    Ok(parse_led_effect(&payload))
+}
+
+pub fn set_led_effect(device: &HidDevice, config: &LedEffect) -> Result<(), String> {
+    let payload = encode_led_effect(config);
+    write_data(device, cmd::SET_LED_EFFECT, &payload, 500)
+}
+
+pub fn factory_reset(device: &HidDevice, reset_type: u8) -> Result<(), String> {
+    let packet = build_packet(cmd::SET_FACTORY_RESET, reset_type, 0, None, true);
+    send(device, &packet)?;
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    Ok(())
 }
