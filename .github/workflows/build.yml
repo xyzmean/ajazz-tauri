@@ -1,13 +1,12 @@
-name: Build Offline Electron Driver
+name: Build Reverse Electron Driver
 
 on:
   push:
     branches:
-      - main
-      - master
+      - dev
   schedule:
-    - cron: '0 0 * * 0' # Run once a week on Sunday at midnight UTC
-  workflow_dispatch: # Enable manual triggering with a single click in GitHub Actions tab
+    - cron: '0 0 * * 0' # Weekly, Sunday 00:00 UTC — refresh assets from the CDN
+  workflow_dispatch:
 
 jobs:
   build:
@@ -25,46 +24,44 @@ jobs:
         with:
           python-version: '3.10'
 
-      - name: Run offline builder script
-        run: |
-          python build_offline.py
-        # This will download all JS modules, translations, and keyboard layout images from the server and patch relative paths.
+      - name: Generate offline UI assets
+        run: python build_offline.py
+        # Scrapes + downloads + URL-patches the upstream bundle into ./app
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
-          cache: 'npm'
-          cache-dependency-path: package.json
 
       - name: Install dependencies
-        run: |
-          npm install
+        working-directory: reverse-source
+        run: npm install
 
-      - name: Package Electron application
-        run: |
-          npx electron-packager . "AJAZZ Local Driver" --platform=win32 --arch=x64 --out=dist --overwrite
+      - name: Build & package (compile TS, copy UI, electron-packager)
+        working-directory: reverse-source
+        run: npm run package
 
       - name: Compress packaged build into ZIP
         shell: pwsh
-        run: |
-          Compress-Archive -Path dist\"AJAZZ Local Driver-win32-x64"\* -DestinationPath ajazz-local-driver.zip
+        working-directory: reverse-source
+        run: Compress-Archive -Path "dist-pkg\AJAZZ Reverse Driver-win32-x64\*" -DestinationPath ajazz-reverse-driver.zip
 
       - name: Upload compiled binary as Build Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ajazz-local-driver-windows
-          path: ajazz-local-driver.zip
+          name: ajazz-reverse-driver-windows
+          path: reverse-source/ajazz-reverse-driver.zip
           retention-days: 30
 
-      - name: Compute release tag (YYMMDD-HHMM, UTC)
+      - name: Compute release tag (dev-YYMMDD-HHMM, UTC)
         id: tag
         shell: pwsh
-        run: echo "tag=$((Get-Date).ToUniversalTime().ToString('yyMMdd-HHmm'))" >> $env:GITHUB_OUTPUT
+        run: echo "tag=dev-$((Get-Date).ToUniversalTime().ToString('yyMMdd-HHmm'))" >> $env:GITHUB_OUTPUT
 
       - name: Publish artifact to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.tag.outputs.tag }}
           name: ${{ steps.tag.outputs.tag }}
-          files: ajazz-local-driver.zip
+          prerelease: true
+          files: reverse-source/ajazz-reverse-driver.zip
