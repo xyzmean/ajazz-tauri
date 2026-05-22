@@ -2,7 +2,7 @@ mod commands;
 mod models;
 mod protocol;
 
-use commands::AppState;
+use commands::{AppState, LedStreamDaemon};
 use hidapi::HidApi;
 use std::sync::Mutex;
 
@@ -14,6 +14,7 @@ pub fn run() {
         .manage(AppState {
             api: Mutex::new(api),
             cached_device: Mutex::new(None),
+            led_stream: LedStreamDaemon::default(),
         })
         .invoke_handler(tauri::generate_handler![
             commands::list_devices,
@@ -25,7 +26,11 @@ pub fn run() {
             commands::factory_reset,
             commands::stream_led_frame,
             commands::send_music_data,
-            commands::upload_lcd_animation
+            commands::upload_lcd_animation,
+            commands::start_led_stream,
+            commands::push_led_frame,
+            commands::stop_led_stream,
+            commands::enter_custom_mode
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

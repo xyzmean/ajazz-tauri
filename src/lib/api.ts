@@ -96,9 +96,23 @@ export interface LedColor {
   b: number;
 }
 
-/** Stream real-time RGB frame to the backlight key matrix. */
+/** Stream a single real-time RGB frame to the backlight key matrix (one-shot). */
 export const streamLedFrame = (path: string, frame: LedColor[]) =>
   invoke<void>("stream_led_frame", { path, frame });
+
+/** Put the keyboard into custom per-key lighting mode (mode 128) so custom frames are shown. */
+export const enterCustomMode = (path: string) =>
+  invoke<void>("enter_custom_mode", { path });
+
+// --- Background LED-frame daemon (owns the device, writes at a steady cadence) ---
+/** Start the background streaming daemon for `path` (idempotent). */
+export const startLedStream = (path: string) =>
+  invoke<void>("start_led_stream", { path });
+/** Push the latest frame for the daemon to stream (O(1) store, no device I/O). */
+export const pushLedFrame = (frame: LedColor[]) =>
+  invoke<void>("push_led_frame", { frame });
+/** Stop the background streaming daemon and clear the pending frame. */
+export const stopLedStream = () => invoke<void>("stop_led_stream");
 
 /** Send native real-time audio spectrum amplitude packets. */
 export const sendMusicData = (

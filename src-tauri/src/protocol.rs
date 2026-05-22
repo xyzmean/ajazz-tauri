@@ -15,7 +15,15 @@ pub const REPORT_ID: u8 = 0;
 pub const REQUEST_HEADER: u8 = 0xAA;
 pub const RESPONSE_HEADER: u8 = 0x55;
 pub const HEADER_SIZE: usize = 8;
-pub const REPORT_SIZE: usize = 32;
+// AK980 MAX (and the vendor 0xFF68 interface generally) exposes a 64-byte output report
+// (descriptor reportCount=0x40). Confirmed against live hardware: at 32 bytes the per-packet
+// payload (24) mismatches the device's expected chunking; 64 gives a 56-byte payload.
+pub const REPORT_SIZE: usize = 64;
+
+/// Number of addressable backlight LEDs in the custom buffer (128 entries × 4 bytes = 512).
+pub const LED_COUNT: usize = 128;
+/// Lighting effect mode that displays the custom per-key buffer (自定义). Confirmed on hardware.
+pub const LED_MODE_CUSTOM: u8 = 128;
 
 /// Command opcodes (subset of CMD from core.ts; extend as features are ported).
 #[allow(dead_code)] // several opcodes are placeholders for not-yet-ported features
@@ -26,6 +34,7 @@ pub mod cmd {
     pub const GET_LED_EFFECT: u8 = 19;
     pub const SET_GAME_MODE: u8 = 33;
     pub const SET_LED_EFFECT: u8 = 35;
+    pub const SET_CUSTOM_LED_DATA: u8 = 36;
     pub const SET_FACTORY_RESET: u8 = 15;
 }
 
@@ -308,7 +317,7 @@ pub fn factory_reset(device: &HidDevice, reset_type: u8) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(serde::Deserialize, serde::Serialize, Clone, Debug)]
+#[derive(serde::Deserialize, serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct LedColor {
     pub idx: u8,
@@ -318,31 +327,49 @@ pub struct LedColor {
 }
 
 pub fn stream_led_frame(device: &HidDevice, frame: Vec<LedColor>) -> Result<(), String> {
-    let chunk_size = 24;
-    let mut payload = Vec::with_capacity(frame.len() * 4);
-    for k in frame {
-        payload.push(k.idx);
-        payload.push(k.r);
-        payload.push(k.g);
-        payload.push(k.b);
+    // Build the full custom buffer: 128 entries × [ledIndex, R, G, B] = 512 bytes. Each frame key's
+    // colour is placed at its LED index (`LedColor.idx`); untouched LEDs stay black. This is the
+    // SET_CUSTOM_LED_DATA (cmd 36) format — confirmed on AK980 MAX hardware. The previous code sent
+    // cmd 50 (= GET_LED_DATA, a getter) and so never actually drove the backlight.
+    let mut buf = [0u8; LED_COUNT * 4];
+    for s in 0..LED_COUNT {
+        buf[s * 4] = s as u8; // entry index byte
     }
-    
-    let content_size = payload.len();
-    let packet_count = content_size.div_ceil(chunk_size);
-    
+    for k in &frame {
+        let s = k.idx as usize;
+        if s < LED_COUNT {
+            buf[s * 4 + 1] = k.r;
+            buf[s * 4 + 2] = k.g;
+            buf[s * 4 + 3] = k.b;
+        }
+    }
+
+    // Fire-and-forget chunking: real-time streaming does not wait for per-packet acks.
+    let per_packet = REPORT_SIZE - HEADER_SIZE;
+    let packet_count = buf.len().div_ceil(per_packet);
     for i in 0..packet_count {
-        let addr = (i * chunk_size) as u16;
-        let from = i * chunk_size;
-        let to = (from + chunk_size).min(content_size);
-        let chunk = &payload[from..to];
-        let len = chunk.len() as u8;
+        let from = i * per_packet;
+        let to = (from + per_packet).min(buf.len());
+        let chunk = &buf[from..to];
         let last = i == packet_count - 1;
-        
-        let packet = build_packet(50, len, addr, Some(chunk), last);
+        let packet =
+            build_packet(cmd::SET_CUSTOM_LED_DATA, chunk.len() as u8, from as u16, Some(chunk), last);
         send(device, &packet)?;
-        let _resp = recv(device, 50, 50)?;
     }
     Ok(())
+}
+
+/// Put the keyboard into custom-buffer lighting mode (mode 128 / 自定义) so the
+/// SET_CUSTOM_LED_DATA buffer is displayed. Call once before streaming frames.
+/// Confirmed on AK980 MAX hardware: without this, the custom buffer is not shown.
+pub fn set_custom_lighting_mode(device: &HidDevice) -> Result<(), String> {
+    let mut e = vec![0u8; 16];
+    e[0] = LED_MODE_CUSTOM;
+    e[4] = 255; // driverSetting (forced by upstream)
+    e[9] = 100; // brightness
+    e[14] = 0xAA; // validation check code L
+    e[15] = 0x55; // validation check code H
+    write_data(device, cmd::SET_LED_EFFECT, &e, 500)
 }
 
 pub fn send_music_data(

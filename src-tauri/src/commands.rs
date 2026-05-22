@@ -3,11 +3,28 @@
 use crate::{models, protocol};
 use hidapi::HidApi;
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub struct AppState {
     pub api: Mutex<HidApi>,
     pub cached_device: Mutex<Option<(String, hidapi::HidDevice)>>,
+    pub led_stream: LedStreamDaemon,
+}
+
+/// Background LED-frame streaming daemon.
+///
+/// Both screen-mirror and GIF playback are just *frame producers*: the frontend pushes the
+/// latest frame into `latest` (an O(1) store, no device I/O on the IPC thread), and a single
+/// background thread owns the device handle and writes frames at a steady cadence, independent
+/// of the webview's timers (which the OS throttles when the window is backgrounded). Identical
+/// consecutive frames are skipped, so a static screen / paused GIF produces zero USB traffic.
+#[derive(Default)]
+pub struct LedStreamDaemon {
+    running: Arc<AtomicBool>,
+    latest: Arc<Mutex<Option<Vec<protocol::LedColor>>>>,
+    handle: Mutex<Option<std::thread::JoinHandle<()>>>,
 }
 
 #[derive(serde::Serialize)]
@@ -263,6 +280,87 @@ pub fn send_music_data(
     with_device(&state, &path, |device| {
         protocol::send_music_data(device, mode, speed, brightness, &amplitudes)
     })
+}
+
+/// Start the background LED-frame streaming daemon for `path`.
+/// Idempotent: a second call while running is a no-op. The daemon owns its own device handle
+/// and writes the most recently pushed frame at a steady cadence until `stop_led_stream`.
+#[tauri::command]
+pub fn start_led_stream(state: tauri::State<AppState>, path: String) -> Result<(), String> {
+    // Claim the running flag; if it was already set, a daemon is live — nothing to do.
+    if state.led_stream.running.swap(true, Ordering::SeqCst) {
+        return Ok(());
+    }
+
+    // Open a dedicated handle for the daemon thread (reusing the single shared HidApi).
+    let device = {
+        let api = state.api.lock().map_err(|e| e.to_string())?;
+        let cpath = std::ffi::CString::new(path).map_err(|e| e.to_string())?;
+        match api.open_path(&cpath) {
+            Ok(d) => d,
+            Err(e) => {
+                state.led_stream.running.store(false, Ordering::SeqCst);
+                return Err(format!("open failed: {e}"));
+            }
+        }
+    };
+
+    // Enter custom-buffer mode once so the streamed frames are actually displayed.
+    let _ = protocol::set_custom_lighting_mode(&device);
+
+    let running = state.led_stream.running.clone();
+    let latest = state.led_stream.latest.clone();
+    let handle = std::thread::spawn(move || {
+        let cadence = Duration::from_millis(16); // ~60 Hz write ceiling
+        let mut last_sent: Option<Vec<protocol::LedColor>> = None;
+        while running.load(Ordering::SeqCst) {
+            let started = Instant::now();
+            let frame = latest.lock().ok().and_then(|g| g.clone());
+            if let Some(frame) = frame {
+                // Optimization: only touch the wire when the frame actually changed.
+                if last_sent.as_ref() != Some(&frame) {
+                    if protocol::stream_led_frame(&device, frame.clone()).is_err() {
+                        break; // device went away — let the daemon exit
+                    }
+                    last_sent = Some(frame);
+                }
+            }
+            if let Some(rem) = cadence.checked_sub(started.elapsed()) {
+                std::thread::sleep(rem);
+            }
+        }
+        running.store(false, Ordering::SeqCst);
+    });
+    *state.led_stream.handle.lock().map_err(|e| e.to_string())? = Some(handle);
+    Ok(())
+}
+
+/// Push the latest frame for the daemon to stream. O(1) store — no device I/O here.
+#[tauri::command]
+pub fn push_led_frame(
+    state: tauri::State<AppState>,
+    frame: Vec<protocol::LedColor>,
+) -> Result<(), String> {
+    *state.led_stream.latest.lock().map_err(|e| e.to_string())? = Some(frame);
+    Ok(())
+}
+
+/// Put the keyboard into custom per-key lighting mode (mode 128). Needed before custom colours
+/// (static fill or a single streamed frame) are displayed.
+#[tauri::command]
+pub fn enter_custom_mode(state: tauri::State<AppState>, path: String) -> Result<(), String> {
+    with_device(&state, &path, protocol::set_custom_lighting_mode)
+}
+
+/// Stop the LED-frame daemon and clear the pending frame.
+#[tauri::command]
+pub fn stop_led_stream(state: tauri::State<AppState>) -> Result<(), String> {
+    state.led_stream.running.store(false, Ordering::SeqCst);
+    if let Some(h) = state.led_stream.handle.lock().map_err(|e| e.to_string())?.take() {
+        let _ = h.join();
+    }
+    *state.led_stream.latest.lock().map_err(|e| e.to_string())? = None;
+    Ok(())
 }
 
 /// Upload animated gif or frame buffer sequences to the LCD screen storage (for future-proofing).

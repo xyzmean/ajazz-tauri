@@ -8,7 +8,9 @@ import {
   getLedEffect, 
   setLedEffect, 
   factoryReset,
-  streamLedFrame,
+  startLedStream,
+  pushLedFrame,
+  stopLedStream,
   sendMusicData,
   type DeviceSummary, 
   type DeviceInfo,
@@ -408,20 +410,17 @@ function switchTab(tab: string) {
 }
 
 // --- Active Backlight Streaming Bridge with On-Screen Preview Mirror ---
-async function streamBacklight(frame: LedColor[]) {
+// Hands the frame to the Rust daemon (O(1) store, no device I/O here). The daemon owns the
+// device and writes at a steady cadence independent of this webview's timers, so frames never
+// pile up behind a blocking invoke. The daemon must be running (startLedStream) first.
+function streamBacklight(frame: LedColor[]) {
   if (!selected.value) return;
-  
-  // 1. Instantly update visual keyboard preview
+  // 1. Instantly update the on-screen keyboard preview.
   for (const k of frame) {
     liveKeyColors.value[k.idx] = `rgb(${k.r}, ${k.g}, ${k.b})`;
   }
-  
-  // 2. Stream raw packet bytes down to Rust hidapi
-  try {
-    await streamLedFrame(selected.value.path, frame);
-  } catch (e) {
-    console.error("Backlight packet streaming failure:", e);
-  }
+  // 2. Push the latest frame to the daemon (fire-and-forget).
+  pushLedFrame(frame).catch(e => console.error("pushLedFrame failed:", e));
 }
 
 async function refresh() {
@@ -571,28 +570,31 @@ async function startAmbientSync() {
     if (!ctx) throw new Error("Could not initialize canvas graphics context");
     
     isAmbientActive.value = true;
-    
-    ambientInterval = setInterval(async () => {
+    // Start the Rust streaming daemon (owns the device, enters custom mode, paces writes).
+    await startLedStream(selected.value.path);
+
+    ambientInterval = setInterval(() => {
       if (!ambientVideo || ambientVideo.readyState < ambientVideo.HAVE_CURRENT_DATA) return;
       ctx.drawImage(ambientVideo, 0, 0, ambientCanvas!.width, ambientCanvas!.height);
       const imgData = ctx.getImageData(0, 0, ambientCanvas!.width, ambientCanvas!.height);
       const data = imgData.data;
-      
+
       const frame: LedColor[] = [];
       for (const key of keysList) {
         // Map 2D physical key matrix space to downsampled coordinates
         const px = Math.min(63, Math.round((key.x / layoutWidth) * 63));
         const py = Math.min(35, Math.round((key.y / layoutHeight) * 35));
-        
+
         const offset = (py * 64 + px) * 4;
         const r = data[offset];
         const g = data[offset + 1];
         const b = data[offset + 2];
-        
+
         frame.push({ idx: key.idx, r, g, b });
       }
-      await streamBacklight(frame);
-    }, 40); // 25 FPS
+      // O(1) hand-off to the daemon; the daemon does the actual paced device writes.
+      streamBacklight(frame);
+    }, 33); // ~30 FPS capture; the daemon de-dupes and paces actual writes
     
     ambientMediaStream.getVideoTracks()[0].onended = () => {
       stopAmbientSync();
@@ -607,6 +609,7 @@ async function startAmbientSync() {
 
 function stopAmbientSync() {
   isAmbientActive.value = false;
+  stopLedStream().catch(() => {});
   if (ambientInterval) {
     clearInterval(ambientInterval);
     ambientInterval = null;
@@ -757,10 +760,12 @@ async function loadGifFile(file: File) {
   }
 }
 
-function startGifPlayback() {
+async function startGifPlayback() {
   if (gifFrames.value.length === 0 || !selected.value) return;
   isGifPlaying.value = true;
   activeGifFrameIndex.value = 0;
+  // Drive the GIF through the same Rust daemon as screen-sync (owns the device, paces writes).
+  await startLedStream(selected.value.path);
   playNextGifFrame();
 }
 
@@ -824,41 +829,38 @@ async function playNextGifFrame() {
     }
   }
   
-  await streamBacklight(frame);
-  
+  streamBacklight(frame);
+
   activeGifFrameIndex.value = (activeGifFrameIndex.value + 1) % gifFrames.value.length;
   gifTimeout = setTimeout(playNextGifFrame, frameData.delay);
 }
 
 function stopGifPlayback() {
   isGifPlaying.value = false;
+  stopLedStream().catch(() => {});
   if (gifTimeout) {
     clearTimeout(gifTimeout);
     gifTimeout = null;
   }
 }
 
+// Effect catalog confirmed against AK980 MAX hardware (the device uses the SECOND lighting
+// catalog from the upstream bundle, not the first): mode 1 = flowing rainbow, 2 = static,
+// 5 = off, 128 = custom per-key buffer. The previous list was the wrong catalog (Starry/Snow/…),
+// which is why "static" actually showed a rolling rainbow.
 const lightModes = [
-  { value: 0, label: "Выключена (Off)" },
-  { value: 1, label: "Статичный (Static)" },
-  { value: 2, label: "Одно касание (Single On)" },
-  { value: 3, label: "Одно угасание (Single Off)" },
-  { value: 4, label: "Звездное небо (Starry)" },
-  { value: 5, label: "Мягкий снег (Snow)" },
-  { value: 6, label: "Цветение (Bloom)" },
-  { value: 7, label: "Дыхание (Breathing)" },
-  { value: 8, label: "Спектр (Spectrum)" },
-  { value: 9, label: "Фонтан (Fountain)" },
-  { value: 10, label: "Перекресток (Colorful)" },
-  { value: 11, label: "Волна (Wave)" },
-  { value: 12, label: "Пик-Долина (Winding)" },
-  { value: 13, label: "Триггер (Trigger)" },
-  { value: 14, label: "Две птички (Two Birds)" },
-  { value: 15, label: "Рябь (Ripple)" },
-  { value: 16, label: "Поток (Flow)" },
-  { value: 17, label: "Горный хребет (Mountain)" },
-  { value: 18, label: "Дождевые капли (Rain)" },
-  { value: 19, label: "Маятник (Shuttle)" }
+  { value: 1, label: "Радуга / течение (Flowing)" },
+  { value: 2, label: "Статичный (Static)" },
+  { value: 3, label: "Дыхание (Breathing)" },
+  { value: 4, label: "Спектр (Spectrum)" },
+  { value: 5, label: "Выключена (Off)" },
+  { value: 6, label: "Динамика (Dynamic)" },
+  { value: 7, label: "Цепная реакция (Chain)" },
+  { value: 8, label: "Звук 1 (Music 1)" },
+  { value: 9, label: "Звук 2 (Music 2)" },
+  { value: 10, label: "Звук 3 (Music 3)" },
+  { value: 11, label: "Звук 4 (Music 4)" },
+  { value: 128, label: "Своя подсветка (Custom)" }
 ];
 
 onMounted(refresh);
