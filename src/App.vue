@@ -863,23 +863,34 @@ function stopGifPlayback() {
   }
 }
 
-// Effect catalog confirmed against AK980 MAX hardware (the device uses the SECOND lighting
-// catalog from the upstream bundle, not the first): mode 1 = flowing rainbow, 2 = static,
-// 5 = off, 128 = custom per-key buffer. The previous list was the wrong catalog (Starry/Snow/…),
-// which is why "static" actually showed a rolling rainbow.
+// Effect catalog matched against the upstream bundle's `defalutLightingModeList`
+// (lighting-*.js). Previous version used `lightBoxModeList` which is the *side strip*
+// catalog, not the main matrix — that mismatch is why mode 2 actually behaved as press-
+// reactive (Single Point On) instead of a static fill on AK980 MAX.
+//
+// `showSpeed` / `showDirection` / `showColor` mirror the upstream UI gating so a future
+// pass can grey out sliders the firmware ignores for that mode.
 const lightModes = [
-  { value: 1, label: "Радуга / течение (Flowing)" },
-  { value: 2, label: "Статичный (Static)" },
-  { value: 3, label: "Дыхание (Breathing)" },
-  { value: 4, label: "Спектр (Spectrum)" },
-  { value: 5, label: "Выключена (Off)" },
-  { value: 6, label: "Динамика (Dynamic)" },
-  { value: 7, label: "Цепная реакция (Chain)" },
-  { value: 8, label: "Звук 1 (Music 1)" },
-  { value: 9, label: "Звук 2 (Music 2)" },
-  { value: 10, label: "Звук 3 (Music 3)" },
-  { value: 11, label: "Звук 4 (Music 4)" },
-  { value: 128, label: "Своя подсветка (Custom)" }
+  { value: 1,   label: "Статичная заливка (Static Bright)",   showSpeed: false, showDirection: false, showColor: true  },
+  { value: 2,   label: "Реактивная — зажигать (Press On)",    showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 3,   label: "Реактивная — гасить (Press Off)",     showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 4,   label: "Звёздное небо (Starry Sky)",          showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 5,   label: "Снегопад (Snowfall)",                 showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 6,   label: "Цветение (Floral)",                   showSpeed: true,  showDirection: false, showColor: false },
+  { value: 7,   label: "Дыхание (Dynamic Breathing)",         showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 8,   label: "Спектральный цикл (Spectrum Cycle)",  showSpeed: true,  showDirection: false, showColor: false },
+  { value: 9,   label: "Цветной фонтан (Color Fountain)",     showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 10,  label: "Цветной поток (Colorful Interchange)",showSpeed: true,  showDirection: true,  showColor: true  },
+  { value: 11,  label: "По волнам (Flowing with Waves)",      showSpeed: true,  showDirection: true,  showColor: true  },
+  { value: 12,  label: "Перевал (Turning Peaks)",             showSpeed: true,  showDirection: true,  showColor: true  },
+  { value: 13,  label: "Касание-вспышка (One Touch to Fire)", showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 14,  label: "Один в двух (Two Birds)",             showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 15,  label: "Расходящаяся рябь (Ripples)",         showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 16,  label: "Бесконечный поток (Endless Flow)",    showSpeed: true,  showDirection: true,  showColor: true  },
+  { value: 17,  label: "Слоистые горы (Layered Mountains)",   showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 18,  label: "Дождь и ветер (Gentle Rain)",         showSpeed: true,  showDirection: true,  showColor: true  },
+  { value: 19,  label: "Туда-сюда (Back and Forth)",          showSpeed: true,  showDirection: false, showColor: true  },
+  { value: 128, label: "Своя подсветка (Custom)",             showSpeed: false, showDirection: false, showColor: true  },
 ];
 
 // --- Background helper (ajazz-helperd) control ---
