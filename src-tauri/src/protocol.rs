@@ -436,8 +436,13 @@ pub struct MagneticAxisRT {
     pub is_whole_fast: bool,
     pub is_rampage_mode: bool,
     pub trigger_key_stroke: f32, // mm
-    pub press_rt: f32,           // mm
-    pub release_rt: f32,         // mm
+    // RT is a protocol acronym (Rapid Trigger), kept fully capitalised on the JS side. Serde's
+    // camelCase rule would emit `pressRt`/`releaseRt` which doesn't match the TS interface — the
+    // frontend then reads `undefined` and `.toFixed()` crashes the magnetic panel on first render.
+    #[serde(rename = "pressRT")]
+    pub press_rt: f32, // mm
+    #[serde(rename = "releaseRT")]
+    pub release_rt: f32, // mm
 }
 
 fn rt_scales(rt_precision: u8) -> (f32, f32) {
