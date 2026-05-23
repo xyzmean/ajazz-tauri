@@ -3,8 +3,9 @@
 //! Streams live content to the keyboard backlight independent of the GUI:
 //!   * `screen` — mirrors the primary display (Desktop Duplication via `scrap`, Windows only)
 //!   * `gif`    — loops a GIF file
-//! Both feed the per-key custom buffer (SET_CUSTOM_LED_DATA / cmd 36 + custom mode 128), which is
-//! the only way this firmware shows custom content (on-device animation storage is unsupported).
+//! Both feed the realtime RGB stream (SET_REALTIME_RGB / cmd 0x32): the firmware arms a 50-tick
+//! watchdog on each packet and falls back to the system effect if no refresh arrives. On-device
+//! animation storage is not supported on this firmware, so a host-side stream is the only path.
 //!
 //! It reads its instructions from the shared `helper.json` config (written by the GUI), so it
 //! keeps running after the GUI is closed. On Windows it can register itself to autostart at logon

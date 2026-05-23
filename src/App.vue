@@ -962,6 +962,45 @@ onMounted(async () => {
             <span class="ids" style="color: var(--neon-cyan);">{{ hex(d.vendorId) }}:{{ hex(d.productId) }}</span>
           </li>
         </ul>
+
+        <nav v-if="info" class="nav-menu" aria-label="Разделы">
+          <div class="nav-section">
+            <div class="nav-section-label">Устройство</div>
+            <button class="nav-item" :class="{ active: activeTab === 'info' }" @click="switchTab('info')">
+              <span class="nav-dot" style="color: var(--neon-cyan);"></span>Параметры
+            </button>
+          </div>
+          <div class="nav-section">
+            <div class="nav-section-label">Подсветка</div>
+            <button class="nav-item" :class="{ active: activeTab === 'lighting' }" :disabled="!ledEffect" @click="switchTab('lighting')">
+              <span class="nav-dot" style="color: var(--neon-pink);"></span>Эффекты
+            </button>
+            <button class="nav-item" :class="{ active: activeTab === 'ambient' }" :disabled="!ledEffect" @click="switchTab('ambient')">
+              <span class="nav-dot" style="color: var(--neon-cyan);"></span>Эмбиент-экран
+            </button>
+            <button class="nav-item" :class="{ active: activeTab === 'equalizer' }" :disabled="!ledEffect" @click="switchTab('equalizer')">
+              <span class="nav-dot" style="color: var(--neon-purple);"></span>Эквалайзер
+            </button>
+            <button class="nav-item" :class="{ active: activeTab === 'pixelart' }" :disabled="!ledEffect" @click="switchTab('pixelart')">
+              <span class="nav-dot" style="color: var(--neon-pink);"></span>Pixel-Art GIF
+            </button>
+          </div>
+          <div class="nav-section">
+            <div class="nav-section-label">Настройка</div>
+            <button class="nav-item" :class="{ active: activeTab === 'performance' }" :disabled="!gameMode" @click="switchTab('performance')">
+              <span class="nav-dot" style="color: var(--neon-yellow);"></span>Rapid Trigger
+            </button>
+            <button class="nav-item" :class="{ active: activeTab === 'background' }" @click="switchTab('background')">
+              <span class="nav-dot" style="color: var(--neon-green);"></span>Фоновый сервис
+            </button>
+          </div>
+          <div class="nav-section">
+            <div class="nav-section-label">Сервис</div>
+            <button class="nav-item" :class="{ active: activeTab === 'maintenance' }" @click="switchTab('maintenance')">
+              <span class="nav-dot" style="color: var(--neon-pink);"></span>Обслуживание
+            </button>
+          </div>
+        </nav>
       </section>
 
       <!-- Active Content Frame -->
@@ -992,23 +1031,8 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- Futuristic Tabs Selector -->
-          <nav class="tabs" style="border-bottom-color: rgba(255,255,255,0.08);">
-            <button class="tab-btn" :class="{ active: activeTab === 'info' }" @click="switchTab('info')">Параметры</button>
-            <button class="tab-btn" :class="{ active: activeTab === 'lighting' }" @click="switchTab('lighting')" :disabled="!ledEffect">Эффекты</button>
-            
-            <!-- Custom Streaming Tabs -->
-            <button class="tab-btn" :class="{ active: activeTab === 'ambient' }" @click="switchTab('ambient')" style="color: var(--neon-cyan);" :disabled="!ledEffect">Эмбиент-Экран</button>
-            <button class="tab-btn" :class="{ active: activeTab === 'equalizer' }" @click="switchTab('equalizer')" style="color: var(--neon-purple);" :disabled="!ledEffect">Эквалайзер</button>
-            <button class="tab-btn" :class="{ active: activeTab === 'pixelart' }" @click="switchTab('pixelart')" style="color: var(--neon-pink);" :disabled="!ledEffect">Pixel-Art GIF</button>
-            
-            <button class="tab-btn" :class="{ active: activeTab === 'performance' }" @click="switchTab('performance')" :disabled="!gameMode">Rapid Trigger</button>
-            <button class="tab-btn" :class="{ active: activeTab === 'maintenance' }" @click="switchTab('maintenance')">Обслуживание</button>
-            <button class="tab-btn" :class="{ active: activeTab === 'background' }" @click="switchTab('background')" style="color: var(--neon-green);">Фоновый сервис</button>
-          </nav>
-
           <!-- Core custom content window -->
-          <div class="card" style="flex: 1 1 auto; background: rgba(12, 14, 25, 0.7); border-color: rgba(255,255,255,0.06); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
+          <div class="card" style="flex: 0 1 auto; background: rgba(12, 14, 25, 0.7); border-color: rgba(255,255,255,0.06); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
             
             <!-- 1. Technical specs properties -->
             <div v-if="activeTab === 'info'" class="grid">

@@ -20,10 +20,11 @@ pub const HEADER_SIZE: usize = 8;
 // payload (24) mismatches the device's expected chunking; 64 gives a 56-byte payload.
 pub const REPORT_SIZE: usize = 64;
 
-/// Number of addressable backlight LEDs in the custom buffer (128 entries × 4 bytes = 512).
-pub const LED_COUNT: usize = 128;
-/// Lighting effect mode that displays the custom per-key buffer (自定义). Confirmed on hardware.
+/// Lighting effect mode that displays the custom per-key buffer (自定义).
 pub const LED_MODE_CUSTOM: u8 = 128;
+
+/// Max LED updates packed into one CMD_REALTIME_RGB (0x32) packet: (64 − 8) / 4 = 14.
+pub const REALTIME_RGB_PER_PACKET: usize = 14;
 
 /// Command opcodes (subset of CMD from core.ts; extend as features are ported).
 #[allow(dead_code)] // several opcodes are placeholders for not-yet-ported features
@@ -34,7 +35,10 @@ pub mod cmd {
     pub const GET_LED_EFFECT: u8 = 19;
     pub const SET_GAME_MODE: u8 = 33;
     pub const SET_LED_EFFECT: u8 = 35;
-    pub const SET_CUSTOM_LED_DATA: u8 = 36;
+    /// Real-time per-LED RGB stream. Firmware sets `*0x2000047d=1` and arms a 50-tick
+    /// watchdog: without a refresh packet within that window the system effect resumes.
+    /// Format: header (8) + N × [led_idx, R, G, B], N ≤ 14. No flash writes (no wear).
+    pub const SET_REALTIME_RGB: u8 = 0x32;
     pub const SET_FACTORY_RESET: u8 = 15;
 }
 
@@ -326,42 +330,36 @@ pub struct LedColor {
     pub b: u8,
 }
 
+/// Stream a frame of per-LED colours via SET_REALTIME_RGB (cmd 0x32). Each packet carries up to
+/// 14 LED updates ([idx, R, G, B]). The firmware holds the realtime override for ~50 ticks after
+/// the last 0x32 packet; if the caller stops sending, system effects resume on their own.
+///
+/// Background: the previous code used cmd 0x24 (= CMD_WRITE_BINDINGS, flash sector 0x9A00) — that
+/// corrupts key bindings and only "lit" a few LEDs as a side-effect. Firmware dump confirms 0x32 is
+/// the proper realtime path (translates idx → physical LED through internal table; no flash wear).
 pub fn stream_led_frame(device: &HidDevice, frame: Vec<LedColor>) -> Result<(), String> {
-    // Build the full custom buffer: 128 entries × [ledIndex, R, G, B] = 512 bytes. Each frame key's
-    // colour is placed at its LED index (`LedColor.idx`); untouched LEDs stay black. This is the
-    // SET_CUSTOM_LED_DATA (cmd 36) format — confirmed on AK980 MAX hardware. The previous code sent
-    // cmd 50 (= GET_LED_DATA, a getter) and so never actually drove the backlight.
-    let mut buf = [0u8; LED_COUNT * 4];
-    for s in 0..LED_COUNT {
-        buf[s * 4] = s as u8; // entry index byte
+    if frame.is_empty() {
+        return Ok(());
     }
-    for k in &frame {
-        let s = k.idx as usize;
-        if s < LED_COUNT {
-            buf[s * 4 + 1] = k.r;
-            buf[s * 4 + 2] = k.g;
-            buf[s * 4 + 3] = k.b;
+    for chunk in frame.chunks(REALTIME_RGB_PER_PACKET) {
+        let mut payload = [0u8; REPORT_SIZE - HEADER_SIZE];
+        for (i, led) in chunk.iter().enumerate() {
+            let o = i * 4;
+            payload[o] = led.idx;
+            payload[o + 1] = led.r;
+            payload[o + 2] = led.g;
+            payload[o + 3] = led.b;
         }
-    }
-
-    // Fire-and-forget chunking: real-time streaming does not wait for per-packet acks.
-    let per_packet = REPORT_SIZE - HEADER_SIZE;
-    let packet_count = buf.len().div_ceil(per_packet);
-    for i in 0..packet_count {
-        let from = i * per_packet;
-        let to = (from + per_packet).min(buf.len());
-        let chunk = &buf[from..to];
-        let last = i == packet_count - 1;
-        let packet =
-            build_packet(cmd::SET_CUSTOM_LED_DATA, chunk.len() as u8, from as u16, Some(chunk), last);
+        let len = (chunk.len() * 4) as u8;
+        let packet = build_packet(cmd::SET_REALTIME_RGB, len, 0, Some(&payload), true);
         send(device, &packet)?;
     }
     Ok(())
 }
 
-/// Put the keyboard into custom-buffer lighting mode (mode 128 / 自定义) so the
-/// SET_CUSTOM_LED_DATA buffer is displayed. Call once before streaming frames.
-/// Confirmed on AK980 MAX hardware: without this, the custom buffer is not shown.
+/// Put the keyboard into the explicit custom-buffer lighting mode (mode 128 / 自定义). Optional for
+/// the streaming path — cmd 0x32 auto-takes-over via the realtime flag — but kept for callers that
+/// want a sticky custom backdrop.
 pub fn set_custom_lighting_mode(device: &HidDevice) -> Result<(), String> {
     let mut e = vec![0u8; 16];
     e[0] = LED_MODE_CUSTOM;
