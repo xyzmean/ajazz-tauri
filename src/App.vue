@@ -938,6 +938,194 @@ const magneticLoading = ref(false);
 // Global ("apply to all") setting controls — applied to every key on save.
 const rtGlobal = ref({ triggerKeyStroke: 1.5, pressRT: 0.5, releaseRT: 0.5, isWholeFast: true, isRampageMode: false });
 
+// Hand-picked RT response profiles. Each one shapes how aggressive the key feels: lower stroke /
+// RT = earlier activation = faster repeated taps. Curves are 4-point sample arrays used by the
+// preset chip sparkline visual.
+const rtPresets = [
+  {
+    id: "gaming",
+    name: "Gaming",
+    label: "RAPID · 0.3mm",
+    desc: "Триггер на полупогружении, минимальный сброс. Для шутеров и платформеров.",
+    accent: "var(--neon-pink)",
+    values: { triggerKeyStroke: 0.3, pressRT: 0.05, releaseRT: 0.05, isWholeFast: true, isRampageMode: false },
+    curve: [0.0, 0.1, 0.85, 1.0],
+  },
+  {
+    id: "balanced",
+    name: "Balanced",
+    label: "MIDPOINT · 1.0mm",
+    desc: "Универсальный профиль: быстрый отклик без ложных нажатий.",
+    accent: "var(--neon-cyan)",
+    values: { triggerKeyStroke: 1.0, pressRT: 0.2, releaseRT: 0.2, isWholeFast: true, isRampageMode: false },
+    curve: [0.0, 0.25, 0.7, 1.0],
+  },
+  {
+    id: "typing",
+    name: "Typing",
+    label: "FULL · 2.0mm",
+    desc: "Глубокий ход, статичный сброс. Привычная «механика» для текста.",
+    accent: "var(--neon-purple)",
+    values: { triggerKeyStroke: 2.0, pressRT: 0.5, releaseRT: 0.5, isWholeFast: false, isRampageMode: false },
+    curve: [0.0, 0.35, 0.55, 1.0],
+  },
+];
+const activePresetId = ref<string | null>(null);
+
+function presetCurvePath(curve: number[]): string {
+  // Smooth-ish sparkline through `curve.length` evenly-spaced y values in [0,1] (top-down SVG).
+  const w = 100;
+  const h = 40;
+  const stepX = w / (curve.length - 1);
+  const pts = curve.map((y, i) => [i * stepX, h - y * (h - 4) - 2] as const);
+  let d = `M ${pts[0][0].toFixed(2)},${pts[0][1].toFixed(2)}`;
+  for (let i = 1; i < pts.length; i++) {
+    const [px, py] = pts[i - 1];
+    const [x, y] = pts[i];
+    const cx = (px + x) / 2;
+    d += ` Q ${cx.toFixed(2)},${py.toFixed(2)} ${x.toFixed(2)},${y.toFixed(2)}`;
+  }
+  return d;
+}
+
+async function applyPreset(presetId: string) {
+  const preset = rtPresets.find((p) => p.id === presetId);
+  if (!preset || !selected.value || !info.value) return;
+  rtGlobal.value = { ...preset.values };
+  activePresetId.value = presetId;
+  // If we haven't read the per-key data yet, fetch first — set requires the full 128-key payload.
+  if (!magneticKeys.value) {
+    await loadMagneticAxis();
+    if (!magneticKeys.value) return; // still nothing → user is offline
+  }
+  await applyRapidTriggerToAll();
+}
+
+// ─── SOCD (Simultaneous Opposite Cardinal Directions) ─────────────────────────────────────────
+// Stored locally for now: the upstream SET_KEY (cmd 34) byte layout isn't reverse-engineered yet,
+// so we keep the user's pairs in localStorage and surface a clear "client-side only" banner. This
+// keeps the UX shippable today without writing garbage to the device's binding flash.
+
+interface SocdPair { id: string; k1: number; k2: number; mode: "last" | "k1" | "k2" | "neutral"; }
+const SOCD_STORAGE_KEY = "ajazz.socd.pairs";
+const socdPairs = ref<SocdPair[]>([]);
+const socdK1 = ref<number | null>(null);
+const socdK2 = ref<number | null>(null);
+const socdMode = ref<SocdPair["mode"]>("last");
+
+const SOCD_MODES: Array<{ id: SocdPair["mode"]; name: string; desc: string }> = [
+  { id: "last", name: "Last input", desc: "Срабатывает последняя нажатая клавиша." },
+  { id: "k1", name: "Key 1 wins", desc: "K1 всегда подавляет K2." },
+  { id: "k2", name: "Key 2 wins", desc: "K2 всегда подавляет K1." },
+  { id: "neutral", name: "Anti-Ghost", desc: "Обе клавиши гасятся, пока зажаты вместе." },
+];
+
+const keyLabelByValue = computed(() => {
+  const m: Record<number, string> = {};
+  for (const k of keysList) m[k.idx] = k.label;
+  return m;
+});
+
+function loadSocdFromStorage() {
+  try {
+    const raw = window.localStorage.getItem(SOCD_STORAGE_KEY);
+    if (raw) socdPairs.value = JSON.parse(raw);
+  } catch { /* ignore corrupt blob */ }
+}
+function persistSocd() {
+  try { window.localStorage.setItem(SOCD_STORAGE_KEY, JSON.stringify(socdPairs.value)); } catch {}
+}
+
+function addSocdPair() {
+  if (socdK1.value == null || socdK2.value == null) return;
+  if (socdK1.value === socdK2.value) {
+    error.value = "Клавиши SOCD-пары должны быть разными.";
+    return;
+  }
+  socdPairs.value.push({
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    k1: socdK1.value, k2: socdK2.value, mode: socdMode.value,
+  });
+  persistSocd();
+  socdK1.value = null; socdK2.value = null;
+}
+function removeSocdPair(id: string) {
+  socdPairs.value = socdPairs.value.filter((p) => p.id !== id);
+  persistSocd();
+}
+function applySocdTemplate(name: "wasd" | "arrows") {
+  const tpl = name === "wasd"
+    ? [{ k1: 49, k2: 51 }, { k1: 34, k2: 50 }]      // A/D, W/S (key values from rawKeyboardList)
+    : [{ k1: 88, k2: 91 }, { k1: 90, k2: 89 }];     // ←/→, ↑/↓
+  for (const t of tpl) {
+    if (socdPairs.value.some((p) => (p.k1 === t.k1 && p.k2 === t.k2) || (p.k1 === t.k2 && p.k2 === t.k1))) continue;
+    socdPairs.value.push({ id: `tpl-${name}-${t.k1}-${t.k2}`, ...t, mode: "last" });
+  }
+  persistSocd();
+}
+
+// ─── Live ADC oscilloscope ─────────────────────────────────────────────────────────────────
+// The firmware streams per-key analog samples (cmd 251) the moment calibration mode is active.
+// We piggyback on that same stream and render the `currentValue` (raw Hall sample) as a
+// rolling trace per touched key. No new protocol surface required.
+
+const SCOPE_WIDTH = 100; // samples per channel kept in the rolling buffer
+const adcMonitorActive = ref(false);
+const adcTraces = ref<Record<number, number[]>>({});
+const adcMaxStroke = ref<Record<number, number>>({});
+let adcPollHandle: any = null;
+let adcWasInCalibration = false;
+
+async function toggleAdcMonitor() {
+  if (adcMonitorActive.value) { stopAdcMonitor(); return; }
+  if (!selected.value) return;
+  // We hijack the calibration channel: if a real calibration session is already running we just
+  // attach to it; otherwise we start one quietly. The scope view doesn't write anything to flash.
+  adcWasInCalibration = calibrationActive.value;
+  if (!calibrationActive.value) {
+    try { await calibrationStart(selected.value.path); } catch (e) { error.value = String(e); return; }
+  }
+  adcMonitorActive.value = true;
+  adcTraces.value = {};
+  adcMaxStroke.value = {};
+  adcPollHandle = setInterval(async () => {
+    if (!selected.value || !adcMonitorActive.value) return;
+    try {
+      const s = await pollCalibrationSample(selected.value.path);
+      if (!s) return;
+      const trace = adcTraces.value[s.keyValue] ? [...adcTraces.value[s.keyValue]] : [];
+      const normalised = s.maxStroke > 0 ? Math.min(1, s.keyStroke / s.maxStroke) : 0;
+      trace.push(normalised);
+      if (trace.length > SCOPE_WIDTH) trace.splice(0, trace.length - SCOPE_WIDTH);
+      adcTraces.value = { ...adcTraces.value, [s.keyValue]: trace };
+      adcMaxStroke.value = { ...adcMaxStroke.value, [s.keyValue]: s.maxStroke };
+    } catch { /* transient — skip this tick */ }
+  }, 40);
+}
+
+function stopAdcMonitor() {
+  adcMonitorActive.value = false;
+  if (adcPollHandle) { clearInterval(adcPollHandle); adcPollHandle = null; }
+  // If we opened the calibration session ourselves, close it cleanly so the firmware exits the
+  // ADC streaming flag (`*0x2000047d`). Don't touch it if a wizard owns the session.
+  if (!adcWasInCalibration && selected.value) {
+    calibrationFinish(selected.value.path).catch(() => {});
+  }
+}
+
+const SCOPE_COLORS = ["#39ff14", "#00f0ff", "#ff007f", "#dfff00", "#9d00ff", "#ff8800", "#39ffaa", "#ff5577"];
+function scopeColor(idx: number, position: number): string {
+  return SCOPE_COLORS[position % SCOPE_COLORS.length] ?? "#39ff14";
+}
+function scopeTracePath(trace: number[]): string {
+  if (!trace.length) return "";
+  const w = 100, h = 100;
+  const stepX = trace.length > 1 ? w / (trace.length - 1) : w;
+  return trace.map((y, i) => `${i === 0 ? "M" : "L"} ${(i * stepX).toFixed(2)},${(h - y * h).toFixed(2)}`).join(" ");
+}
+
+const activeScopeChannels = computed(() => Object.keys(adcTraces.value).map(Number).sort((a, b) => a - b));
+
 // Calibration session state. `samples` is keyed by physical LED index so we can colour the keys
 // directly on the virtual keyboard during a session.
 const calibrationActive = ref(false);
@@ -1050,6 +1238,7 @@ function calibrationColor(ledIdx: number): string {
 
 onMounted(async () => {
   await refresh();
+  loadSocdFromStorage();
   try {
     const cfg = await getHelperConfig();
     helperMode.value = cfg.mode;
@@ -1499,45 +1688,77 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- 5b. Magnetic switches: guided calibration + Rapid Trigger -->
-            <div v-else-if="activeTab === 'magnetic'" style="display: flex; flex-direction: column; gap: 20px;">
-              <div>
-                <h3 style="margin: 0 0 4px; font-size: 16px; color: #fff;">Магнитные свичи (Hall-эффект)</h3>
-                <p style="margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5;">
-                  Откалибруйте ход свичей под себя и настройте Rapid Trigger одним движением — глобально для всей клавиатуры.
-                  По умолчанию это даёт самый предсказуемый отклик, без копания в каждой клавише.
-                </p>
+            <!-- 5b. Magnetic switches: instrument panel — calibration, presets, RT, SOCD, scope. -->
+            <div v-else-if="activeTab === 'magnetic'" class="instrument-panel">
+
+              <!-- Header: device callsign + status pips -->
+              <div class="panel-status-strip">
+                <div class="panel-status-cell">
+                  <span class="led-pip" :style="{ color: selected ? 'var(--neon-cyan)' : 'var(--muted)' }"
+                        :class="{ dim: !selected }"></span>
+                  <div style="display: flex; flex-direction: column;">
+                    <span class="label">Channel</span>
+                    <span class="value">{{ selected?.modelName ?? selected?.product ?? "—" }}</span>
+                  </div>
+                </div>
+                <div class="panel-status-cell">
+                  <span class="led-pip"
+                        :style="{ color: calibrationActive ? 'var(--neon-green)' : 'var(--muted)' }"
+                        :class="{ dim: !calibrationActive, pulsing: calibrationActive }"></span>
+                  <div style="display: flex; flex-direction: column;">
+                    <span class="label">Calibrate</span>
+                    <span class="value">{{ calibrationActive ? `${calibratedCount}/${keysList.length}` : "READY" }}</span>
+                  </div>
+                </div>
+                <div class="panel-status-cell">
+                  <span class="led-pip"
+                        :style="{ color: activePresetId ? rtPresets.find(p => p.id === activePresetId)?.accent : 'var(--muted)' }"
+                        :class="{ dim: !activePresetId }"></span>
+                  <div style="display: flex; flex-direction: column;">
+                    <span class="label">Profile</span>
+                    <span class="value">{{ activePresetId ? rtPresets.find(p => p.id === activePresetId)?.name : "CUSTOM" }}</span>
+                  </div>
+                </div>
+                <div class="panel-status-cell">
+                  <span class="led-pip"
+                        :style="{ color: adcMonitorActive ? 'var(--neon-yellow)' : 'var(--muted)' }"
+                        :class="{ dim: !adcMonitorActive, pulsing: adcMonitorActive }"></span>
+                  <div style="display: flex; flex-direction: column;">
+                    <span class="label">Scope</span>
+                    <span class="value">{{ adcMonitorActive ? `${activeScopeChannels.length}CH` : "OFF" }}</span>
+                  </div>
+                </div>
               </div>
 
-              <!-- Calibration wizard -->
-              <div class="card card-neon-cyan" style="padding: 18px; display: flex; flex-direction: column; gap: 14px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-                  <div style="display: flex; flex-direction: column; gap: 2px;">
-                    <span style="font-weight: 700; color: var(--neon-cyan); font-size: 14px;">Калибровка хода</span>
-                    <span style="font-size: 11px; color: var(--muted);">
-                      Нажмите по очереди каждую клавишу до упора. Клавиша подсветится зелёным — это значит «готово».
-                    </span>
-                  </div>
-                  <div v-if="calibrationActive" style="font-size: 11px; color: var(--neon-green); font-weight: 700;">
-                    Готово {{ calibratedCount }} / {{ keysList.length }}
-                  </div>
-                </div>
+              <!-- ─── 01 · CALIBRATION ────────────────────────────────────────────────── -->
+              <div class="section-rule">
+                <span class="idx">01</span>
+                <span class="title">Travel calibration</span>
+                <span class="line"></span>
+                <span class="meta">cmd 0x69 · streaming notify 0xFB</span>
+              </div>
 
-                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                  <button v-if="!calibrationActive" class="btn" :disabled="!selected" @click="startCalibration"
-                          style="background: var(--neon-cyan); color: #000;">
-                    Начать калибровку
-                  </button>
-                  <template v-else>
-                    <button class="btn" @click="finishCalibration" style="background: var(--neon-green); color: #000;">
-                      Сохранить и завершить
+              <div style="display: flex; flex-direction: column; gap: 14px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                  <p style="margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; max-width: 520px;">
+                    Нажмите каждую клавишу до упора — ход датчика Холла запомнится и калибровка станет
+                    устойчивой к температурному дрейфу. Зелёный — готово, жёлтый — есть касание, розовый — ждём.
+                  </p>
+                  <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button v-if="!calibrationActive" class="btn" :disabled="!selected" @click="startCalibration"
+                            style="background: var(--neon-cyan); color: #000;">
+                      ▸ Начать
                     </button>
-                    <button class="btn btn-secondary" @click="cancelCalibration">Отмена</button>
-                  </template>
+                    <template v-else>
+                      <button class="btn" @click="finishCalibration" style="background: var(--neon-green); color: #000;">
+                        ✓ Сохранить
+                      </button>
+                      <button class="btn btn-secondary" @click="cancelCalibration">✕ Отмена</button>
+                    </template>
+                  </div>
                 </div>
 
-                <!-- Live progress overlay on the keyboard preview. -->
-                <div v-if="calibrationActive" class="virtual-keyboard" style="--kb-unit: 28px; padding: 10px;">
+                <div v-if="calibrationActive" class="virtual-keyboard" style="--kb-unit: 26px; --kb-gap: 4px; padding: 10px;">
                   <div v-for="(row, ri) in rawKeyboardList" :key="ri" class="keyboard-row">
                     <div
                       v-for="key in row"
@@ -1545,88 +1766,266 @@ onMounted(async () => {
                       :class="['key-item', key.className]"
                       :style="{ background: calibrationColor(key.value), borderColor: 'rgba(255,255,255,0.06)' }"
                     >
-                      <span style="font-size: 8px; opacity: 0.7;">{{ key.name }}</span>
+                      <span style="font-size: 7px; opacity: 0.8;">{{ key.name }}</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              <!-- Rapid Trigger (apply-to-all) -->
-              <div class="card card-neon-purple" style="padding: 18px; display: flex; flex-direction: column; gap: 14px;">
-                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
-                  <div style="display: flex; flex-direction: column; gap: 2px;">
-                    <span style="font-weight: 700; color: var(--neon-purple); font-size: 14px;">Rapid Trigger — единые настройки</span>
-                    <span style="font-size: 11px; color: var(--muted);">
-                      Триггер срабатывает на любом ходу: чем меньше Trigger, тем выше «чувствительность нажатия».
-                      Press/Release — насколько глубоко нужно нажать/отпустить относительно текущего положения.
-                    </span>
-                  </div>
-                  <button class="btn btn-secondary" :disabled="magneticLoading || !selected" @click="loadMagneticAxis">
-                    {{ magneticLoading ? "Чтение…" : "Прочитать с клавиатуры" }}
-                  </button>
-                </div>
+              <!-- ─── 02 · RESPONSE PRESETS ───────────────────────────────────────────── -->
+              <div class="section-rule">
+                <span class="idx">02</span>
+                <span class="title">Response presets</span>
+                <span class="line"></span>
+                <span class="meta">one-click → cmd 0x27 write</span>
+              </div>
 
-                <div v-if="magneticKeys" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
-                  <div class="form-group">
-                    <label>Точка срабатывания (Trigger) — {{ rtGlobal.triggerKeyStroke.toFixed(2) }} мм</label>
-                    <input type="range" min="0.1" max="4.0" step="0.05" v-model.number="rtGlobal.triggerKeyStroke" class="range-slider">
-                  </div>
-                  <div class="form-group">
-                    <label>Press RT (на нажатие) — {{ rtGlobal.pressRT.toFixed(2) }} мм</label>
-                    <input type="range" min="0.01" max="2.0" step="0.01" v-model.number="rtGlobal.pressRT" class="range-slider">
-                  </div>
-                  <div class="form-group">
-                    <label>Release RT (на отпускание) — {{ rtGlobal.releaseRT.toFixed(2) }} мм</label>
-                    <input type="range" min="0.01" max="2.0" step="0.01" v-model.number="rtGlobal.releaseRT" class="range-slider">
-                  </div>
-                </div>
-
-                <div v-if="magneticKeys" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
-                  <div class="switch-container" style="background: rgba(0,0,0,0.2);">
-                    <div class="switch-info">
-                      <span class="switch-title" style="font-size: 13px;">Whole-fast (динамический ход)</span>
-                      <span class="switch-desc">Каждое нажатие/отпускание адаптирует точку срабатывания.</span>
-                    </div>
-                    <label class="switch">
-                      <input type="checkbox" v-model="rtGlobal.isWholeFast">
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-                  <div class="switch-container" style="background: rgba(0,0,0,0.2);">
-                    <div class="switch-info">
-                      <span class="switch-title" style="font-size: 13px;">Rampage Mode</span>
-                      <span class="switch-desc">Экстремальная точность — для проверенных свичей.</span>
-                    </div>
-                    <label class="switch">
-                      <input type="checkbox" v-model="rtGlobal.isRampageMode">
-                      <span class="slider"></span>
-                    </label>
-                  </div>
-                </div>
-
-                <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);">
-                  <button class="btn" :disabled="applying || !magneticKeys" @click="applyRapidTriggerToAll"
-                          style="background: var(--neon-purple); color: #fff;">
-                    {{ applying ? "Запись…" : "Применить ко всем клавишам" }}
-                  </button>
-                  <button class="btn btn-secondary" :disabled="applying" @click="triggerReset(5)">
-                    Сбросить калибровку
-                  </button>
-                  <span v-if="!magneticKeys && !magneticLoading" style="font-size: 12px; color: var(--muted);">
-                    Нажмите «Прочитать с клавиатуры», чтобы увидеть текущие значения.
+              <div class="preset-rail">
+                <button
+                  v-for="preset in rtPresets"
+                  :key="preset.id"
+                  class="preset-chip"
+                  :class="{ 'is-active': activePresetId === preset.id }"
+                  :disabled="!selected || applying"
+                  @click="applyPreset(preset.id)"
+                >
+                  <span class="preset-corner">{{ preset.label }}</span>
+                  <span class="preset-name" :style="{ color: activePresetId === preset.id ? 'var(--neon-cyan)' : preset.accent }">
+                    {{ preset.name }}
                   </span>
+                  <svg class="preset-curve" viewBox="0 0 100 40" preserveAspectRatio="none">
+                    <defs>
+                      <linearGradient :id="`g-${preset.id}`" x1="0" x2="0" y1="0" y2="1">
+                        <stop offset="0%" :stop-color="preset.accent" stop-opacity="0.5"/>
+                        <stop offset="100%" :stop-color="preset.accent" stop-opacity="0"/>
+                      </linearGradient>
+                    </defs>
+                    <path :d="`${presetCurvePath(preset.curve)} L 100,40 L 0,40 Z`" :fill="`url(#g-${preset.id})`" />
+                    <path :d="presetCurvePath(preset.curve)" fill="none" :stroke="preset.accent" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                  <span class="preset-strapline">{{ preset.desc }}</span>
+                </button>
+              </div>
+
+              <!-- ─── 03 · RAPID TRIGGER (manual override) ────────────────────────────── -->
+              <div class="section-rule">
+                <span class="idx">03</span>
+                <span class="title">Rapid trigger · global</span>
+                <span class="line"></span>
+                <span class="meta">{{ magneticKeys ? `${magneticKeys.length} slots resident` : "no payload loaded" }}</span>
+              </div>
+
+              <div style="display: flex; flex-direction: column; gap: 16px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                  <p style="margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5; max-width: 520px;">
+                    Тонкая настройка профиля — для тех, кто хочет своё. Сначала «Прочитать с клавиатуры»,
+                    чтобы получить текущие значения, потом крутите.
+                  </p>
+                  <button class="btn btn-secondary" :disabled="magneticLoading || !selected" @click="loadMagneticAxis">
+                    {{ magneticLoading ? "↺ Чтение…" : "↺ Прочитать с клавиатуры" }}
+                  </button>
                 </div>
 
-                <details v-if="magneticKeys" style="margin-top: 4px; font-size: 12px;">
-                  <summary style="cursor: pointer; color: var(--muted);">Расширенно: текущие значения по 128 слотам</summary>
-                  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; margin-top: 8px; max-height: 220px; overflow-y: auto; padding: 4px;">
-                    <div v-for="(k, i) in magneticKeys" :key="i"
-                         style="background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.04); border-radius: 6px; padding: 4px 6px; font-family: ui-monospace, monospace; font-size: 10px;">
-                      <div style="color: var(--muted);">#{{ i }}</div>
-                      <div>{{ k.triggerKeyStroke.toFixed(2) }} мм</div>
+                <template v-if="magneticKeys">
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px;">
+                    <div class="form-group">
+                      <label style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Trigger stroke</span>
+                        <span class="numeric-readout">{{ rtGlobal.triggerKeyStroke.toFixed(2) }} <span class="unit">MM</span></span>
+                      </label>
+                      <input type="range" min="0.1" max="4.0" step="0.05" v-model.number="rtGlobal.triggerKeyStroke" class="range-slider" @input="activePresetId = null">
+                    </div>
+                    <div class="form-group">
+                      <label style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Press RT</span>
+                        <span class="numeric-readout">{{ rtGlobal.pressRT.toFixed(2) }} <span class="unit">MM</span></span>
+                      </label>
+                      <input type="range" min="0.01" max="2.0" step="0.01" v-model.number="rtGlobal.pressRT" class="range-slider" @input="activePresetId = null">
+                    </div>
+                    <div class="form-group">
+                      <label style="display: flex; justify-content: space-between; align-items: center;">
+                        <span>Release RT</span>
+                        <span class="numeric-readout">{{ rtGlobal.releaseRT.toFixed(2) }} <span class="unit">MM</span></span>
+                      </label>
+                      <input type="range" min="0.01" max="2.0" step="0.01" v-model.number="rtGlobal.releaseRT" class="range-slider" @input="activePresetId = null">
                     </div>
                   </div>
-                </details>
+
+                  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+                    <div class="switch-container" style="background: rgba(0,0,0,0.25);">
+                      <div class="switch-info">
+                        <span class="switch-title" style="font-size: 13px;">Whole-fast</span>
+                        <span class="switch-desc">Динамическая точка срабатывания — адаптируется на лету.</span>
+                      </div>
+                      <label class="switch">
+                        <input type="checkbox" v-model="rtGlobal.isWholeFast" @change="activePresetId = null">
+                        <span class="slider"></span>
+                      </label>
+                    </div>
+                    <div class="switch-container" style="background: rgba(0,0,0,0.25);">
+                      <div class="switch-info">
+                        <span class="switch-title" style="font-size: 13px;">Rampage Mode</span>
+                        <span class="switch-desc">Экстремальная чувствительность. Только для качественных свичей.</span>
+                      </div>
+                      <label class="switch">
+                        <input type="checkbox" v-model="rtGlobal.isRampageMode" @change="activePresetId = null">
+                        <span class="slider"></span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-top: 10px; border-top: 1px dashed rgba(255,255,255,0.06);">
+                    <button class="btn" :disabled="applying" @click="applyRapidTriggerToAll"
+                            style="background: var(--neon-purple); color: #fff;">
+                      {{ applying ? "→ Запись…" : "→ Записать в железо" }}
+                    </button>
+                    <button class="btn btn-secondary" :disabled="applying" @click="triggerReset(5)">
+                      Сбросить калибровку
+                    </button>
+                  </div>
+                </template>
+                <p v-else-if="!magneticLoading" style="font-size: 12px; color: var(--muted); margin: 0;">
+                  → Нажмите «Прочитать с клавиатуры» чтобы получить текущие 128 слотов.
+                </p>
+              </div>
+
+              <!-- ─── 04 · SOCD MATRIX ────────────────────────────────────────────────── -->
+              <div class="section-rule">
+                <span class="idx">04</span>
+                <span class="title">SOCD matrix</span>
+                <span class="line"></span>
+                <span class="meta">client-side preview · device write pending firmware reverse</span>
+              </div>
+
+              <div class="socd-builder">
+                <!-- Pair builder canvas -->
+                <div class="socd-canvas">
+                  <div class="socd-keys">
+                    <label class="socd-key" :class="socdK1 != null ? 'is-k1' : 'is-empty'">
+                      <span class="kicker">Key 1</span>
+                      <span class="cap">{{ socdK1 != null ? (keyLabelByValue[socdK1] || `#${socdK1}`) : "—" }}</span>
+                      <select v-model.number="socdK1">
+                        <option :value="null">— выбрать —</option>
+                        <option v-for="k in keysList" :key="`k1-${k.idx}`" :value="k.idx">{{ k.label }}</option>
+                      </select>
+                    </label>
+
+                    <svg class="socd-bridge" viewBox="0 0 70 60" fill="none">
+                      <defs>
+                        <linearGradient id="bridge-grad" x1="0" x2="1" y1="0" y2="0">
+                          <stop offset="0%" stop-color="#ff007f" stop-opacity="0.8"/>
+                          <stop offset="100%" stop-color="#00f0ff" stop-opacity="0.8"/>
+                        </linearGradient>
+                      </defs>
+                      <path d="M 4 30 C 20 4, 50 4, 66 30" stroke="url(#bridge-grad)" stroke-width="1.5" fill="none" stroke-dasharray="3 3"/>
+                      <circle cx="4" cy="30" r="3" fill="#ff007f"/>
+                      <circle cx="66" cy="30" r="3" fill="#00f0ff"/>
+                      <text x="35" y="50" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="#8295a5" letter-spacing="1.5">SOCD</text>
+                    </svg>
+
+                    <label class="socd-key" :class="socdK2 != null ? 'is-k2' : 'is-empty'">
+                      <span class="kicker">Key 2</span>
+                      <span class="cap">{{ socdK2 != null ? (keyLabelByValue[socdK2] || `#${socdK2}`) : "—" }}</span>
+                      <select v-model.number="socdK2">
+                        <option :value="null">— выбрать —</option>
+                        <option v-for="k in keysList" :key="`k2-${k.idx}`" :value="k.idx">{{ k.label }}</option>
+                      </select>
+                    </label>
+                  </div>
+
+                  <div class="socd-mode-strip">
+                    <button v-for="m in SOCD_MODES" :key="m.id" class="socd-mode-pill"
+                            :class="{ 'is-active': socdMode === m.id }"
+                            @click="socdMode = m.id">
+                      <span class="name">{{ m.name }}</span>
+                      <span class="desc">{{ m.desc }}</span>
+                    </button>
+                  </div>
+
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+                    <button class="btn" :disabled="socdK1 == null || socdK2 == null"
+                            @click="addSocdPair"
+                            style="background: var(--neon-purple); color: #fff;">
+                      + Добавить пару
+                    </button>
+                    <div class="socd-template-row">
+                      <span style="font-family: var(--font-mono); font-size: 9px; color: var(--muted); letter-spacing: 0.15em; align-self: center;">QUICK:</span>
+                      <button class="tpl" @click="applySocdTemplate('wasd')">WASD</button>
+                      <button class="tpl" @click="applySocdTemplate('arrows')">ARROWS</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Active pairs roster -->
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                  <div style="display: flex; align-items: center; justify-content: space-between;">
+                    <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; color: var(--muted); text-transform: uppercase;">
+                      Active pairs · {{ socdPairs.length }}
+                    </span>
+                    <button v-if="socdPairs.length" class="btn btn-secondary" style="padding: 4px 10px; font-size: 11px;"
+                            @click="socdPairs = []; persistSocd();">
+                      ✕ Очистить все
+                    </button>
+                  </div>
+                  <div v-if="!socdPairs.length"
+                       style="padding: 16px; border: 1px dashed rgba(255,255,255,0.1); border-radius: 4px; text-align: center;
+                              font-family: var(--font-mono); font-size: 11px; color: var(--muted); letter-spacing: 0.1em;">
+                    NO PAIRS CONFIGURED
+                  </div>
+                  <div v-else class="socd-list">
+                    <div v-for="p in socdPairs" :key="p.id" class="socd-row">
+                      <span class="k k1">{{ keyLabelByValue[p.k1] || `#${p.k1}` }}</span>
+                      <span class="bridge">↔</span>
+                      <span class="k k2">{{ keyLabelByValue[p.k2] || `#${p.k2}` }}</span>
+                      <span class="mode-tag">{{ SOCD_MODES.find(m => m.id === p.mode)?.name || p.mode }}</span>
+                      <button class="remove" @click="removeSocdPair(p.id)" title="Удалить пару">×</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- ─── 05 · SCOPE — LIVE HALL-EFFECT ADC ───────────────────────────────── -->
+              <div class="section-rule">
+                <span class="idx">05</span>
+                <span class="title">Scope · live ADC</span>
+                <span class="line"></span>
+                <span class="meta">cmd 0xFB sample stream · {{ activeScopeChannels.length }} CH active</span>
+              </div>
+
+              <div class="scope-frame">
+                <div class="scope-bezel">
+                  <div class="knob-cluster">
+                    <span class="knob">▸ SRC: HALL-Σ</span>
+                    <span class="knob">▸ T/DIV: 40MS</span>
+                    <span class="knob">▸ V/DIV: 0.5MM</span>
+                  </div>
+                  <button class="arm-toggle" :class="{ armed: adcMonitorActive }"
+                          :disabled="!selected" @click="toggleAdcMonitor">
+                    {{ adcMonitorActive ? "● ARMED" : "○ ARM" }}
+                  </button>
+                </div>
+                <div class="scope-screen">
+                  <svg v-if="activeScopeChannels.length" class="scope-canvas" viewBox="0 0 100 100"
+                       preserveAspectRatio="none">
+                    <path v-for="(idx, pos) in activeScopeChannels" :key="idx"
+                          :d="scopeTracePath(adcTraces[idx])"
+                          :stroke="scopeColor(idx, pos)"
+                          :style="{ filter: `drop-shadow(0 0 2px ${scopeColor(idx, pos)})` }"
+                          fill="none" stroke-width="0.6" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                  <div v-else class="scope-empty">
+                    <span class="blink">▸ ARM SCOPE TO BEGIN ◂</span>
+                    <span style="opacity: 0.5; font-size: 9px;">no samples — press a key after arming</span>
+                  </div>
+                </div>
+                <div v-if="activeScopeChannels.length" class="scope-channels">
+                  <div v-for="(idx, pos) in activeScopeChannels" :key="idx" class="scope-channel"
+                       :style="{ color: scopeColor(idx, pos) }">
+                    <span class="swatch"></span>
+                    <span class="label">{{ keyLabelByValue[idx] || `KEY ${idx.toString(16).padStart(2,'0')}` }}</span>
+                    <span class="reading">{{ ((adcTraces[idx]?.[adcTraces[idx].length-1] ?? 0) * 100).toFixed(0).padStart(2, '0') }}%</span>
+                  </div>
+                </div>
               </div>
             </div>
 
