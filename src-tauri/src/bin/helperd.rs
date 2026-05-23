@@ -97,7 +97,7 @@ fn open_keyboard(api: &HidApi, want: &Option<String>) -> Option<HidDevice> {
 /// Sample a frame buffer on the 16×6 LED grid. `bgra` selects byte order (true for `scrap`'s BGRA,
 /// false for RGBA from the GIF decoder).
 fn sample_grid(buf: &[u8], w: usize, h: usize, stride: usize, bgra: bool) -> Vec<LedColor> {
-    let mut out = Vec::with_capacity(COLS * ROWS);
+    let mut out = Vec::with_capacity(128);
     for row in 0..ROWS {
         for col in 0..COLS {
             let x = ((((col as f32) + 0.5) / COLS as f32) * w as f32) as usize;
@@ -119,6 +119,38 @@ fn sample_grid(buf: &[u8], w: usize, h: usize, stride: usize, bgra: bool) -> Vec
             });
         }
     }
+
+    // Navigation cluster on a physically precise 19x6 grid
+    let nav_keys = [
+        (99, 0, 16),   // PRINT
+        (100, 0, 17),  // SCROLL
+        (102, 0, 18),  // PAUSE
+        (103, 0, 15),  // INSERT
+        (104, 1, 14),  // HOME
+        (105, 2, 14),  // PAGEUP
+        (106, 0, 14),  // DELETE
+        (107, 4, 14),  // END
+        (108, 3, 14),  // PAGEDOWN
+    ];
+    for &(idx, nav_row, nav_col) in &nav_keys {
+        let x = ((((nav_col as f32) + 0.5) / 19.0) * w as f32) as usize;
+        let y = ((((nav_row as f32) + 0.5) / 6.0) * h as f32) as usize;
+        let i = y.min(h - 1) * stride + x.min(w - 1) * 4;
+        if i + 2 < buf.len() {
+            let (r, g, b) = if bgra {
+                (buf[i + 2], buf[i + 1], buf[i])
+            } else {
+                (buf[i], buf[i + 1], buf[i + 2])
+            };
+            out.push(LedColor {
+                idx: idx as u8,
+                r,
+                g,
+                b,
+            });
+        }
+    }
+
     out
 }
 
