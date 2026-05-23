@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Reverse-engineered Ajazz keyboard driver (Tauri + Rust hidapi)"
 edition = "2021"
 rust-version = "1.77"
+# Disambiguates `cargo run` / tauri-build now that we ship the background helper as a second bin.
+default-run = "ajazz-tauri-driver"
 
 [lib]
 name = "ajazz_tauri_driver_lib"

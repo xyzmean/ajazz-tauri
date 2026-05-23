@@ -33,13 +33,34 @@ pub mod cmd {
     pub const GET_GAME_MODE: u8 = 17;
     pub const GET_KEY: u8 = 18;
     pub const GET_LED_EFFECT: u8 = 19;
+    /// Per-key magnetic axis Rapid Trigger config — 1024 bytes, 128 × 8.
+    pub const GET_MAGNETIC_AXIS_RT: u8 = 23;
     pub const SET_GAME_MODE: u8 = 33;
     pub const SET_LED_EFFECT: u8 = 35;
+    pub const SET_MAGNETIC_AXIS_RT: u8 = 39;
     /// Real-time per-LED RGB stream. Firmware sets `*0x2000047d=1` and arms a 50-tick
     /// watchdog: without a refresh packet within that window the system effect resumes.
     /// Format: header (8) + N × [led_idx, R, G, B], N ≤ 14. No flash writes (no wear).
     pub const SET_REALTIME_RGB: u8 = 0x32;
     pub const SET_FACTORY_RESET: u8 = 15;
+    /// Begin calibration session (v2 firmware ≥ frameVersion 1).
+    pub const SET_CALIBRATION_ON_V2: u8 = 105;
+    /// End calibration session and commit results.
+    pub const SET_CALIBRATION_OFF_V2: u8 = 106;
+    /// Notification packet emitted by the firmware during calibration (one per key state change).
+    pub const GET_MAGNETIC_AXIS_CALIBRATION_DATA: u8 = 251;
+}
+
+/// Number of addressable magnetic-axis keys (firmware fixes 128 slots).
+pub const MAGNETIC_AXIS_COUNT: usize = 128;
+
+/// `reset_type` argument values accepted by `factory_reset` (see core.ts `FactoryResetType`).
+#[allow(dead_code)]
+pub mod reset_type {
+    pub const RESET_ALL: u8 = 255;
+    pub const CLEAR_CALIBRATION: u8 = 5;
+    pub const RESET_KEYS: u8 = 2;
+    pub const RESET_LIGHTING: u8 = 1;
 }
 
 /// Build one 32-byte request packet (port of `buildPacket` / minified `P`).
@@ -400,6 +421,145 @@ pub fn send_music_data(
     
     device.write(&out).map_err(|e| format!("music write failed: {e}"))?;
     Ok(())
+}
+
+// ── Magnetic-axis Rapid Trigger (per-key) ────────────────────────────────────────────────────
+//
+// Port of `getMagneticAxisRT` / `setMagneticAxisRT` (cmds 23/39). Payload = 1024 bytes laid out as
+// 128 × 8: [axisType, flags, triggerStrokeLE, pressRTLE, releaseRTLE]. Distance scaling depends on
+// device.rtPrecision (0 → /100 for all; 1 → strokes /100, RT /1000; 2 → both /1000).
+
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct MagneticAxisRT {
+    pub axis_type: u8,
+    pub is_whole_fast: bool,
+    pub is_rampage_mode: bool,
+    pub trigger_key_stroke: f32, // mm
+    pub press_rt: f32,           // mm
+    pub release_rt: f32,         // mm
+}
+
+fn rt_scales(rt_precision: u8) -> (f32, f32) {
+    let rt = if rt_precision > 0 { 1000.0 } else { 100.0 };
+    let stroke = if rt_precision == 2 { 1000.0 } else { 100.0 };
+    (stroke, rt)
+}
+
+pub fn parse_magnetic_axis_rt(buf: &[u8], rt_precision: u8) -> Vec<MagneticAxisRT> {
+    let (stroke_scale, rt_scale) = rt_scales(rt_precision);
+    let mut out = Vec::with_capacity(MAGNETIC_AXIS_COUNT);
+    for i in 0..MAGNETIC_AXIS_COUNT {
+        let b = i * 8;
+        if b + 7 >= buf.len() {
+            break;
+        }
+        let flags = buf[b + 1];
+        out.push(MagneticAxisRT {
+            axis_type: buf[b],
+            is_whole_fast: (flags & 1) != 0,
+            is_rampage_mode: (flags & 2) != 0,
+            trigger_key_stroke: u16::from_le_bytes([buf[b + 2], buf[b + 3]]) as f32 / stroke_scale,
+            press_rt: u16::from_le_bytes([buf[b + 4], buf[b + 5]]) as f32 / rt_scale,
+            release_rt: u16::from_le_bytes([buf[b + 6], buf[b + 7]]) as f32 / rt_scale,
+        });
+    }
+    out
+}
+
+pub fn encode_magnetic_axis_rt(keys: &[MagneticAxisRT], rt_precision: u8) -> Vec<u8> {
+    let (stroke_scale, rt_scale) = rt_scales(rt_precision);
+    let mut out = vec![0u8; MAGNETIC_AXIS_COUNT * 8];
+    for (i, k) in keys.iter().take(MAGNETIC_AXIS_COUNT).enumerate() {
+        let b = i * 8;
+        out[b] = k.axis_type;
+        out[b + 1] = (if k.is_whole_fast { 1 } else { 0 }) | (if k.is_rampage_mode { 2 } else { 0 });
+        let stroke = (k.trigger_key_stroke * stroke_scale).round().clamp(0.0, u16::MAX as f32) as u16;
+        let press = (k.press_rt * rt_scale).round().clamp(0.0, u16::MAX as f32) as u16;
+        let release = (k.release_rt * rt_scale).round().clamp(0.0, u16::MAX as f32) as u16;
+        out[b + 2..b + 4].copy_from_slice(&stroke.to_le_bytes());
+        out[b + 4..b + 6].copy_from_slice(&press.to_le_bytes());
+        out[b + 6..b + 8].copy_from_slice(&release.to_le_bytes());
+    }
+    out
+}
+
+pub fn get_magnetic_axis_rt(
+    device: &HidDevice,
+    rt_precision: u8,
+    frame_version: u8,
+) -> Result<Vec<MagneticAxisRT>, String> {
+    let timeout = if frame_version == 1 { 2000 } else { 500 };
+    let payload = read_data(device, cmd::GET_MAGNETIC_AXIS_RT, MAGNETIC_AXIS_COUNT * 8, timeout)?;
+    Ok(parse_magnetic_axis_rt(&payload, rt_precision))
+}
+
+pub fn set_magnetic_axis_rt(
+    device: &HidDevice,
+    keys: &[MagneticAxisRT],
+    rt_precision: u8,
+    frame_version: u8,
+) -> Result<(), String> {
+    let timeout = if frame_version == 1 { 2000 } else { 500 };
+    let payload = encode_magnetic_axis_rt(keys, rt_precision);
+    write_data(device, cmd::SET_MAGNETIC_AXIS_RT, &payload, timeout)
+}
+
+// ── Calibration ───────────────────────────────────────────────────────────────────────────────
+//
+// During calibration the firmware streams unsolicited input reports with cmd=251. We don't try to
+// keep the device handle open across an async session; instead the frontend polls a Tauri command
+// that does a short read_timeout() and forwards any sample it finds.
+
+#[derive(Serialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct CalibrationSample {
+    pub key_value: u8,
+    /// 0 = not calibrated; ≥1 = calibrated (firmware uses progressive codes).
+    pub calibration_status: u8,
+    pub max_value: u16,
+    pub min_value: u16,
+    pub current_value: u16,
+    pub key_stroke: u16,
+    pub max_stroke: u16,
+}
+
+pub fn parse_calibration_sample(buf: &[u8]) -> Option<CalibrationSample> {
+    if buf.len() < 14 || buf[0] != RESPONSE_HEADER || buf[1] != cmd::GET_MAGNETIC_AXIS_CALIBRATION_DATA {
+        return None;
+    }
+    Some(CalibrationSample {
+        key_value: buf[2],
+        calibration_status: buf[3],
+        max_value: u16::from_le_bytes([buf[4], buf[5]]),
+        min_value: u16::from_le_bytes([buf[6], buf[7]]) & 0x7FFF,
+        current_value: u16::from_le_bytes([buf[8], buf[9]]),
+        key_stroke: u16::from_le_bytes([buf[10], buf[11]]),
+        max_stroke: u16::from_le_bytes([buf[12], buf[13]]),
+    })
+}
+
+pub fn calibration_start(device: &HidDevice) -> Result<(), String> {
+    let packet = build_packet(cmd::SET_CALIBRATION_ON_V2, 0, 0, None, true);
+    send(device, &packet)
+}
+
+pub fn calibration_finish(device: &HidDevice) -> Result<(), String> {
+    let packet = build_packet(cmd::SET_CALIBRATION_OFF_V2, 0, 0, None, true);
+    send(device, &packet)
+}
+
+/// Read one pending input report and try to parse it as a calibration sample. Returns Ok(None) on
+/// timeout (no sample available) or when the packet was something else.
+pub fn poll_calibration_sample(device: &HidDevice, timeout_ms: i32) -> Result<Option<CalibrationSample>, String> {
+    let mut buf = [0u8; REPORT_SIZE];
+    let n = device
+        .read_timeout(&mut buf, timeout_ms)
+        .map_err(|e| format!("read failed: {e}"))?;
+    if n == 0 {
+        return Ok(None);
+    }
+    Ok(parse_calibration_sample(&buf[..n]))
 }
 
 pub fn upload_lcd_animation(

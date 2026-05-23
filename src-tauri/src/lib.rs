@@ -35,7 +35,12 @@ pub fn run() {
             commands::get_helper_config,
             commands::set_helper_config,
             commands::install_helper_autostart,
-            commands::uninstall_helper_autostart
+            commands::uninstall_helper_autostart,
+            commands::get_magnetic_axis_rt,
+            commands::set_magnetic_axis_rt,
+            commands::calibration_start,
+            commands::calibration_finish,
+            commands::poll_calibration_sample
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

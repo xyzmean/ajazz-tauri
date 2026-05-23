@@ -1,12 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue";
-import { 
-  listDevices, 
-  getDeviceInfo, 
-  getGameMode, 
-  setGameMode, 
-  getLedEffect, 
-  setLedEffect, 
+import {
+  listDevices,
+  getDeviceInfo,
+  getGameMode,
+  setGameMode,
+  getLedEffect,
+  setLedEffect,
   factoryReset,
   startLedStream,
   pushLedFrame,
@@ -16,11 +16,18 @@ import {
   setHelperConfig,
   installHelperAutostart,
   uninstallHelperAutostart,
-  type DeviceSummary, 
+  getMagneticAxisRt,
+  setMagneticAxisRt,
+  calibrationStart,
+  calibrationFinish,
+  pollCalibrationSample,
+  type DeviceSummary,
   type DeviceInfo,
   type GameMode,
   type LedEffect,
-  type LedColor
+  type LedColor,
+  type MagneticAxisRT,
+  type CalibrationSample
 } from "./lib/api";
 
 // --- Hardware Key Backlight Layout Matrix ---
@@ -401,8 +408,11 @@ function switchTab(tab: string) {
   stopAmbientSync();
   stopEqualizer();
   stopGifPlayback();
+  // Calibration session must end before leaving the tab — otherwise the firmware stays in
+  // calibration mode and ignores normal input.
+  if (calibrationActive.value && tab !== 'magnetic') cancelCalibration();
   activeTab.value = tab;
-  
+
   if (tab === 'lighting') {
     updateStaticBacklight();
   } else {
@@ -410,6 +420,10 @@ function switchTab(tab: string) {
     for (const k of keysList) {
       liveKeyColors.value[k.idx] = "rgba(255,255,255,0.02)";
     }
+  }
+
+  if (tab === 'magnetic' && !magneticKeys.value) {
+    loadMagneticAxis();
   }
 }
 
@@ -917,6 +931,123 @@ async function disableAutostart() {
   }
 }
 
+// ─── Magnetic-axis Rapid Trigger & calibration ────────────────────────────────────────────────
+
+const magneticKeys = ref<MagneticAxisRT[] | null>(null);
+const magneticLoading = ref(false);
+// Global ("apply to all") setting controls — applied to every key on save.
+const rtGlobal = ref({ triggerKeyStroke: 1.5, pressRT: 0.5, releaseRT: 0.5, isWholeFast: true, isRampageMode: false });
+
+// Calibration session state. `samples` is keyed by physical LED index so we can colour the keys
+// directly on the virtual keyboard during a session.
+const calibrationActive = ref(false);
+const calibrationSamples = ref<Record<number, CalibrationSample>>({});
+let calibrationPollHandle: any = null;
+
+const isHostWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.platform || navigator.userAgent || "");
+
+const calibratedCount = computed(() =>
+  Object.values(calibrationSamples.value).filter((s) => s.calibrationStatus >= 1).length
+);
+
+async function loadMagneticAxis() {
+  if (!selected.value || !info.value) return;
+  magneticLoading.value = true;
+  try {
+    const keys = await getMagneticAxisRt(selected.value.path, info.value.rtPrecision, info.value.frameVersion);
+    magneticKeys.value = keys;
+    // Seed the global controls from the first key so the sliders mean something the moment we open.
+    if (keys[0]) {
+      rtGlobal.value.triggerKeyStroke = keys[0].triggerKeyStroke;
+      rtGlobal.value.pressRT = keys[0].pressRT;
+      rtGlobal.value.releaseRT = keys[0].releaseRT;
+      rtGlobal.value.isWholeFast = keys[0].isWholeFast;
+      rtGlobal.value.isRampageMode = keys[0].isRampageMode;
+    }
+  } catch (e) {
+    error.value = "Не удалось прочитать настройки магнитных свичей: " + String(e);
+  } finally {
+    magneticLoading.value = false;
+  }
+}
+
+async function applyRapidTriggerToAll() {
+  if (!selected.value || !info.value || !magneticKeys.value) return;
+  applying.value = true;
+  error.value = null;
+  try {
+    const updated = magneticKeys.value.map((k) => ({
+      ...k,
+      triggerKeyStroke: rtGlobal.value.triggerKeyStroke,
+      pressRT: rtGlobal.value.pressRT,
+      releaseRT: rtGlobal.value.releaseRT,
+      isWholeFast: rtGlobal.value.isWholeFast,
+      isRampageMode: rtGlobal.value.isRampageMode,
+    }));
+    await setMagneticAxisRt(selected.value.path, updated, info.value.rtPrecision, info.value.frameVersion);
+    magneticKeys.value = updated;
+    triggerSuccess("Rapid Trigger применён ко всем клавишам.");
+  } catch (e) {
+    error.value = "Не удалось записать Rapid Trigger: " + String(e);
+  } finally {
+    applying.value = false;
+  }
+}
+
+async function startCalibration() {
+  if (!selected.value) return;
+  // Streaming + calibration would compete for the device; stop any live effects first.
+  stopAmbientSync();
+  stopEqualizer();
+  stopGifPlayback();
+  error.value = null;
+  calibrationSamples.value = {};
+  try {
+    await calibrationStart(selected.value.path);
+    calibrationActive.value = true;
+    triggerSuccess("Калибровка началась — нажмите каждую клавишу до упора.");
+    // Poll for samples; the firmware streams them as the user works through the keyboard.
+    calibrationPollHandle = setInterval(async () => {
+      if (!selected.value || !calibrationActive.value) return;
+      try {
+        const s = await pollCalibrationSample(selected.value.path);
+        if (s) calibrationSamples.value = { ...calibrationSamples.value, [s.keyValue]: s };
+      } catch { /* poll failures are transient; the next tick retries */ }
+    }, 60);
+  } catch (e) {
+    calibrationActive.value = false;
+    error.value = "Не удалось начать калибровку: " + String(e);
+  }
+}
+
+async function finishCalibration() {
+  if (!selected.value) return;
+  calibrationActive.value = false;
+  if (calibrationPollHandle) { clearInterval(calibrationPollHandle); calibrationPollHandle = null; }
+  try {
+    await calibrationFinish(selected.value.path);
+    triggerSuccess(`Калибровка сохранена. Откалибровано клавиш: ${calibratedCount.value}.`);
+  } catch (e) {
+    error.value = "Не удалось завершить калибровку: " + String(e);
+  }
+}
+
+function cancelCalibration() {
+  calibrationActive.value = false;
+  if (calibrationPollHandle) { clearInterval(calibrationPollHandle); calibrationPollHandle = null; }
+  calibrationSamples.value = {};
+  // Still send the OFF packet so the firmware exits calibration mode cleanly.
+  if (selected.value) calibrationFinish(selected.value.path).catch(() => {});
+}
+
+function calibrationColor(ledIdx: number): string {
+  const s = calibrationSamples.value[ledIdx];
+  if (!s) return "rgba(255,255,255,0.04)";
+  if (s.calibrationStatus >= 1) return "rgba(57,255,20,0.45)"; // green
+  if (s.currentValue > 0) return "rgba(223,255,0,0.35)";       // yellow — touched, not done
+  return "rgba(255,0,127,0.18)";                                 // pink — waiting
+}
+
 onMounted(async () => {
   await refresh();
   try {
@@ -987,8 +1118,11 @@ onMounted(async () => {
           </div>
           <div class="nav-section">
             <div class="nav-section-label">Настройка</div>
+            <button class="nav-item" :class="{ active: activeTab === 'magnetic' }" @click="switchTab('magnetic')">
+              <span class="nav-dot" style="color: var(--neon-yellow);"></span>Магнитные свичи
+            </button>
             <button class="nav-item" :class="{ active: activeTab === 'performance' }" :disabled="!gameMode" @click="switchTab('performance')">
-              <span class="nav-dot" style="color: var(--neon-yellow);"></span>Rapid Trigger
+              <span class="nav-dot" style="color: var(--neon-cyan);"></span>Производительность
             </button>
             <button class="nav-item" :class="{ active: activeTab === 'background' }" @click="switchTab('background')">
               <span class="nav-dot" style="color: var(--neon-green);"></span>Фоновый сервис
@@ -1170,22 +1304,34 @@ onMounted(async () => {
 
             <!-- 3b. Background service (helper daemon, runs without the app open) -->
             <div v-else-if="activeTab === 'background'" style="display: flex; flex-direction: column; gap: 16px;" class="card-neon-cyan">
+              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                <span style="font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 999px;
+                             border: 1px solid rgba(0,240,255,0.45); color: var(--neon-cyan);
+                             background: rgba(0,240,255,0.08); letter-spacing: 0.05em;">
+                  WINDOWS ONLY
+                </span>
+                <span v-if="!isHostWindows" style="font-size: 11px; color: var(--neon-pink); font-weight: 700;">
+                  Текущая ОС — не Windows: фоновый сервис не запустится.
+                </span>
+              </div>
               <span style="font-size: 13px; color: var(--text-bright); line-height: 1.5;">
                 Фоновый сервис стримит экран или GIF на клавиатуру <b>даже когда это приложение закрыто</b>.
                 Он запускается при входе в Windows и работает независимо от GUI.
               </span>
               <div style="font-size: 11px; color: var(--muted);">
-                Захват экрана — только Windows. Пока фоновый режим активен, не включайте эмбиент/GIF здесь же —
-                клавиатурой управляет один процесс.
+                Захват экрана и автозапуск — только Windows (DXGI + HKCU\…\Run). Пока фоновый режим активен,
+                не включайте эмбиент/GIF здесь же — клавиатурой управляет один процесс.
               </div>
 
               <div style="display: flex; gap: 10px; flex-wrap: wrap;">
                 <button class="btn" :class="{ 'btn-secondary': helperMode !== 'screen' }"
+                        :disabled="!isHostWindows"
                         @click="setHelperMode('screen')"
                         :style="helperMode === 'screen' ? 'background: var(--neon-green); color:#000; font-weight:800;' : ''">
                   Экран → клавиатура
                 </button>
                 <button class="btn" :class="{ 'btn-secondary': helperMode !== 'gif' }"
+                        :disabled="!isHostWindows"
                         @click="setHelperMode('gif')"
                         :style="helperMode === 'gif' ? 'background: var(--neon-green); color:#000; font-weight:800;' : ''">
                   GIF (зациклить)
@@ -1197,20 +1343,20 @@ onMounted(async () => {
 
               <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;">
                 Путь к GIF-файлу (для режима GIF):
-                <input v-model="helperGifPath" type="text" placeholder="C:\\path\\to\\anim.gif"
+                <input v-model="helperGifPath" type="text" placeholder="C:\\path\\to\\anim.gif" :disabled="!isHostWindows"
                        style="padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); color: var(--text-bright);" />
               </label>
 
               <div style="display: flex; align-items: center; gap: 10px; font-size: 12px;">
                 <span>Кадр/сек:</span>
-                <input v-model.number="helperFps" type="number" min="5" max="60"
+                <input v-model.number="helperFps" type="number" min="5" max="60" :disabled="!isHostWindows"
                        style="width: 70px; padding: 6px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); color: var(--text-bright);" />
                 <span style="font-size: 11px; color: var(--muted);">статус: <b :style="{ color: helperMode === 'off' ? 'var(--neon-pink)' : 'var(--neon-green)' }">{{ helperMode === 'off' ? 'ВЫКЛ' : helperMode.toUpperCase() }}</b></span>
               </div>
 
               <div style="display: flex; gap: 10px; margin-top: 6px;">
-                <button class="btn btn-secondary" @click="enableAutostart">Включить автозапуск при входе</button>
-                <button class="btn btn-secondary" @click="disableAutostart">Отключить автозапуск</button>
+                <button class="btn btn-secondary" :disabled="!isHostWindows" @click="enableAutostart">Включить автозапуск при входе</button>
+                <button class="btn btn-secondary" :disabled="!isHostWindows" @click="disableAutostart">Отключить автозапуск</button>
               </div>
             </div>
 
@@ -1350,6 +1496,137 @@ onMounted(async () => {
                   </div>
                 </div>
 
+              </div>
+            </div>
+
+            <!-- 5b. Magnetic switches: guided calibration + Rapid Trigger -->
+            <div v-else-if="activeTab === 'magnetic'" style="display: flex; flex-direction: column; gap: 20px;">
+              <div>
+                <h3 style="margin: 0 0 4px; font-size: 16px; color: #fff;">Магнитные свичи (Hall-эффект)</h3>
+                <p style="margin: 0; font-size: 12px; color: var(--muted); line-height: 1.5;">
+                  Откалибруйте ход свичей под себя и настройте Rapid Trigger одним движением — глобально для всей клавиатуры.
+                  По умолчанию это даёт самый предсказуемый отклик, без копания в каждой клавише.
+                </p>
+              </div>
+
+              <!-- Calibration wizard -->
+              <div class="card card-neon-cyan" style="padding: 18px; display: flex; flex-direction: column; gap: 14px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                  <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-weight: 700; color: var(--neon-cyan); font-size: 14px;">Калибровка хода</span>
+                    <span style="font-size: 11px; color: var(--muted);">
+                      Нажмите по очереди каждую клавишу до упора. Клавиша подсветится зелёным — это значит «готово».
+                    </span>
+                  </div>
+                  <div v-if="calibrationActive" style="font-size: 11px; color: var(--neon-green); font-weight: 700;">
+                    Готово {{ calibratedCount }} / {{ keysList.length }}
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                  <button v-if="!calibrationActive" class="btn" :disabled="!selected" @click="startCalibration"
+                          style="background: var(--neon-cyan); color: #000;">
+                    Начать калибровку
+                  </button>
+                  <template v-else>
+                    <button class="btn" @click="finishCalibration" style="background: var(--neon-green); color: #000;">
+                      Сохранить и завершить
+                    </button>
+                    <button class="btn btn-secondary" @click="cancelCalibration">Отмена</button>
+                  </template>
+                </div>
+
+                <!-- Live progress overlay on the keyboard preview. -->
+                <div v-if="calibrationActive" class="virtual-keyboard" style="--kb-unit: 28px; padding: 10px;">
+                  <div v-for="(row, ri) in rawKeyboardList" :key="ri" class="keyboard-row">
+                    <div
+                      v-for="key in row"
+                      :key="key.value"
+                      :class="['key-item', key.className]"
+                      :style="{ background: calibrationColor(key.value), borderColor: 'rgba(255,255,255,0.06)' }"
+                    >
+                      <span style="font-size: 8px; opacity: 0.7;">{{ key.name }}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Rapid Trigger (apply-to-all) -->
+              <div class="card card-neon-purple" style="padding: 18px; display: flex; flex-direction: column; gap: 14px;">
+                <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px;">
+                  <div style="display: flex; flex-direction: column; gap: 2px;">
+                    <span style="font-weight: 700; color: var(--neon-purple); font-size: 14px;">Rapid Trigger — единые настройки</span>
+                    <span style="font-size: 11px; color: var(--muted);">
+                      Триггер срабатывает на любом ходу: чем меньше Trigger, тем выше «чувствительность нажатия».
+                      Press/Release — насколько глубоко нужно нажать/отпустить относительно текущего положения.
+                    </span>
+                  </div>
+                  <button class="btn btn-secondary" :disabled="magneticLoading || !selected" @click="loadMagneticAxis">
+                    {{ magneticLoading ? "Чтение…" : "Прочитать с клавиатуры" }}
+                  </button>
+                </div>
+
+                <div v-if="magneticKeys" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">
+                  <div class="form-group">
+                    <label>Точка срабатывания (Trigger) — {{ rtGlobal.triggerKeyStroke.toFixed(2) }} мм</label>
+                    <input type="range" min="0.1" max="4.0" step="0.05" v-model.number="rtGlobal.triggerKeyStroke" class="range-slider">
+                  </div>
+                  <div class="form-group">
+                    <label>Press RT (на нажатие) — {{ rtGlobal.pressRT.toFixed(2) }} мм</label>
+                    <input type="range" min="0.01" max="2.0" step="0.01" v-model.number="rtGlobal.pressRT" class="range-slider">
+                  </div>
+                  <div class="form-group">
+                    <label>Release RT (на отпускание) — {{ rtGlobal.releaseRT.toFixed(2) }} мм</label>
+                    <input type="range" min="0.01" max="2.0" step="0.01" v-model.number="rtGlobal.releaseRT" class="range-slider">
+                  </div>
+                </div>
+
+                <div v-if="magneticKeys" class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px;">
+                  <div class="switch-container" style="background: rgba(0,0,0,0.2);">
+                    <div class="switch-info">
+                      <span class="switch-title" style="font-size: 13px;">Whole-fast (динамический ход)</span>
+                      <span class="switch-desc">Каждое нажатие/отпускание адаптирует точку срабатывания.</span>
+                    </div>
+                    <label class="switch">
+                      <input type="checkbox" v-model="rtGlobal.isWholeFast">
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                  <div class="switch-container" style="background: rgba(0,0,0,0.2);">
+                    <div class="switch-info">
+                      <span class="switch-title" style="font-size: 13px;">Rampage Mode</span>
+                      <span class="switch-desc">Экстремальная точность — для проверенных свичей.</span>
+                    </div>
+                    <label class="switch">
+                      <input type="checkbox" v-model="rtGlobal.isRampageMode">
+                      <span class="slider"></span>
+                    </label>
+                  </div>
+                </div>
+
+                <div style="display: flex; gap: 10px; flex-wrap: wrap; align-items: center; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);">
+                  <button class="btn" :disabled="applying || !magneticKeys" @click="applyRapidTriggerToAll"
+                          style="background: var(--neon-purple); color: #fff;">
+                    {{ applying ? "Запись…" : "Применить ко всем клавишам" }}
+                  </button>
+                  <button class="btn btn-secondary" :disabled="applying" @click="triggerReset(5)">
+                    Сбросить калибровку
+                  </button>
+                  <span v-if="!magneticKeys && !magneticLoading" style="font-size: 12px; color: var(--muted);">
+                    Нажмите «Прочитать с клавиатуры», чтобы увидеть текущие значения.
+                  </span>
+                </div>
+
+                <details v-if="magneticKeys" style="margin-top: 4px; font-size: 12px;">
+                  <summary style="cursor: pointer; color: var(--muted);">Расширенно: текущие значения по 128 слотам</summary>
+                  <div style="display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 4px; margin-top: 8px; max-height: 220px; overflow-y: auto; padding: 4px;">
+                    <div v-for="(k, i) in magneticKeys" :key="i"
+                         style="background: rgba(0,0,0,0.35); border: 1px solid rgba(255,255,255,0.04); border-radius: 6px; padding: 4px 6px; font-family: ui-monospace, monospace; font-size: 10px;">
+                      <div style="color: var(--muted);">#{{ i }}</div>
+                      <div>{{ k.triggerKeyStroke.toFixed(2) }} мм</div>
+                    </div>
+                  </div>
+                </details>
               </div>
             </div>
 

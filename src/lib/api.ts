@@ -147,4 +147,45 @@ export const uploadLcdAnimation = (
   rgb565Buffer: number[]
 ) => invoke<void>("upload_lcd_animation", { path, delays, rgb565Buffer });
 
+// --- Magnetic axis Rapid Trigger + calibration ---
+export interface MagneticAxisRT {
+  axisType: number;
+  isWholeFast: boolean;
+  isRampageMode: boolean;
+  triggerKeyStroke: number; // mm
+  pressRT: number;          // mm
+  releaseRT: number;        // mm
+}
+
+export interface CalibrationSample {
+  keyValue: number;
+  /** 0 = uncalibrated; ≥1 = progress / done (firmware-dependent). */
+  calibrationStatus: number;
+  maxValue: number;
+  minValue: number;
+  currentValue: number;
+  keyStroke: number;
+  maxStroke: number;
+}
+
+/** Read per-key Rapid Trigger configuration (128 entries). */
+export const getMagneticAxisRt = (path: string, rtPrecision: number, frameVersion: number) =>
+  invoke<MagneticAxisRT[]>("get_magnetic_axis_rt", { path, rtPrecision, frameVersion });
+
+/** Write per-key Rapid Trigger configuration. */
+export const setMagneticAxisRt = (
+  path: string,
+  keys: MagneticAxisRT[],
+  rtPrecision: number,
+  frameVersion: number
+) => invoke<void>("set_magnetic_axis_rt", { path, keys, rtPrecision, frameVersion });
+
+/** Begin a calibration session — press each key fully, then call `calibrationFinish` to save. */
+export const calibrationStart = (path: string) => invoke<void>("calibration_start", { path });
+/** End the calibration session and commit results. */
+export const calibrationFinish = (path: string) => invoke<void>("calibration_finish", { path });
+/** Short blocking read for one calibration sample (null on timeout / unrelated report). */
+export const pollCalibrationSample = (path: string) =>
+  invoke<CalibrationSample | null>("poll_calibration_sample", { path });
+
 

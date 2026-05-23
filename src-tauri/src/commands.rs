@@ -412,6 +412,53 @@ pub fn uninstall_helper_autostart() -> Result<(), String> {
     Ok(())
 }
 
+// ── Magnetic-axis Rapid Trigger + calibration ────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn get_magnetic_axis_rt(
+    state: tauri::State<AppState>,
+    path: String,
+    rt_precision: u8,
+    frame_version: u8,
+) -> Result<Vec<protocol::MagneticAxisRT>, String> {
+    with_device(&state, &path, |device| {
+        protocol::get_magnetic_axis_rt(device, rt_precision, frame_version)
+    })
+}
+
+#[tauri::command]
+pub fn set_magnetic_axis_rt(
+    state: tauri::State<AppState>,
+    path: String,
+    keys: Vec<protocol::MagneticAxisRT>,
+    rt_precision: u8,
+    frame_version: u8,
+) -> Result<(), String> {
+    with_device(&state, &path, |device| {
+        protocol::set_magnetic_axis_rt(device, &keys, rt_precision, frame_version)
+    })
+}
+
+#[tauri::command]
+pub fn calibration_start(state: tauri::State<AppState>, path: String) -> Result<(), String> {
+    with_device(&state, &path, protocol::calibration_start)
+}
+
+#[tauri::command]
+pub fn calibration_finish(state: tauri::State<AppState>, path: String) -> Result<(), String> {
+    with_device(&state, &path, protocol::calibration_finish)
+}
+
+/// Frontend poll for live calibration samples. Returns the freshest sample (or none) after a short
+/// blocking read. Designed to be called in a loop while the calibration session is active.
+#[tauri::command]
+pub fn poll_calibration_sample(
+    state: tauri::State<AppState>,
+    path: String,
+) -> Result<Option<protocol::CalibrationSample>, String> {
+    with_device(&state, &path, |device| protocol::poll_calibration_sample(device, 50))
+}
+
 /// Upload animated gif or frame buffer sequences to the LCD screen storage (for future-proofing).
 #[tauri::command]
 pub fn upload_lcd_animation(
