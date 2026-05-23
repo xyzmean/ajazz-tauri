@@ -2120,3 +2120,41 @@ input:checked + .slider:before {
 }
 .compat-banner.tone-warn { border-color: rgba(255,0,127,0.35); color: var(--neon-pink); }
 .compat-banner.tone-warn .badge { background: rgba(255,0,127,0.08); }
+
+/* Custom utility classes to match user's ideal keyboard render layout */
+.flex-center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.mt-20 {
+  margin-top: 20px;
+}
+.p-4 {
+  padding: 16px;
+}
+.p-1 {
+  padding: 4px;
+}
+.rounded-2\.5 {
+  border-radius: 10px;
+}
+.rounded-sm {
+  border-radius: 4px;
+}
+.bg-primary\:10 {
+  background-color: rgba(255, 0, 127, 0.1);
+  border: 1px solid rgba(255, 0, 127, 0.2);
+}
+.w-fit {
+  width: fit-content;
+}
+.mb-1 {
+  margin-bottom: 4px;
+}
+.gap-1 {
+  gap: 4px;
+}
+.mb-1:last-child {
+  margin-bottom: 0 !important;
+}

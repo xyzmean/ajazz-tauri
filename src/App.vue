@@ -2002,15 +2002,23 @@ onMounted(async () => {
                   </div>
                 </div>
 
-                <div v-if="calibrationActive" class="virtual-keyboard" style="--kb-unit: 26px; --kb-gap: 4px; padding: 10px;">
-                  <div v-for="(row, ri) in rawKeyboardList" :key="ri" class="keyboard-row">
-                    <div
-                      v-for="key in row"
-                      :key="key.value"
-                      :class="['key-item', key.className]"
-                      :style="{ background: calibrationColor(key.value), borderColor: 'rgba(255,255,255,0.06)' }"
-                    >
-                      <span style="font-size: 7px; opacity: 0.8;">{{ key.name }}</span>
+                <div v-if="calibrationActive" class="flex-center" style="margin-top: 10px;">
+                  <div class="relative p-2 rounded-2.5 bg-primary:10 w-fit">
+                    <div class="rounded-sm w-fit relative" style="padding: 2px; --kb-unit: 20px; --kb-gap: 2px;">
+                      <div 
+                        v-for="(row, ri) in rawKeyboardList" 
+                        :key="ri" 
+                        class="relative flex justify-between gap-1 mb-1 last:mb-0"
+                      >
+                        <div
+                          v-for="key in row"
+                          :key="key.value"
+                          :class="['key-item', 'w-14', 'h-14', key.className]"
+                          :style="{ background: calibrationColor(key.value), borderColor: 'rgba(255,255,255,0.06)' }"
+                        >
+                          <span style="font-size: 6px; opacity: 0.8; font-weight: 700;">{{ key.name }}</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -2404,35 +2412,40 @@ onMounted(async () => {
             <div style="margin-top: auto; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 24px; display: flex; flex-direction: column; gap: 12px;">
               <span style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; color: var(--muted); font-weight: 800; text-align: center;">ИНТЕРАКТИВНЫЙ МОНИТОРИНГ ПОДСВЕТКИ (LIVE KEYBOARD PROJECTION)</span>
               
-              <div class="virtual-keyboard">
-                <div 
-                  v-for="(row, rIdx) in rawKeyboardList" 
-                  :key="rIdx" 
-                  class="keyboard-row"
-                >
-                  <div
-                    v-for="key in row"
-                    :key="key.value"
-                    :class="['key-item', key.className]"
-                    :style="{ 
-                      borderColor: liveKeyColors[key.value] ? `${liveKeyColors[key.value]}` : 'rgba(255,255,255,0.08)',
-                      boxShadow: liveKeyColors[key.value] ? `0 0 12px ${liveKeyColors[key.value]}33` : 'none',
-                      color: liveKeyColors[key.value] ? '#fff' : '#a9b1d6'
-                    }"
-                  >
-                    <div class="key-highlight-top"></div>
-                    <div class="key-content">
-                      <span class="key-label">{{ key.name }}</span>
-                    </div>
-                    <div class="key-shadow-bottom"></div>
-                    <!-- Glowing custom LED projection -->
+              <div class="flex-center mt-20">
+                <div class="relative p-4 rounded-2.5 bg-primary:10 w-fit">
+                  <div class="p-1 rounded-sm w-fit relative" style="--kb-unit: 22px; --kb-gap: 3px;">
                     <div 
-                      class="key-cap-led" 
-                      :style="{ 
-                        backgroundColor: liveKeyColors[key.value] || 'transparent',
-                        boxShadow: liveKeyColors[key.value] ? `0 -1px 12px 2px ${liveKeyColors[key.value]}` : 'none'
-                      }"
-                    ></div>
+                      v-for="(row, rIdx) in rawKeyboardList" 
+                      :key="rIdx" 
+                      class="relative flex justify-between gap-1 mb-1 last:mb-0"
+                    >
+                      <div
+                        v-for="key in row"
+                        :key="key.value"
+                        :class="['key-item', 'w-14', 'h-14', key.className]"
+                        :style="{ 
+                          borderColor: liveKeyColors[key.value] ? `${liveKeyColors[key.value]}` : 'rgba(255,255,255,0.08)',
+                          boxShadow: liveKeyColors[key.value] ? `0 0 12px ${liveKeyColors[key.value]}33` : 'none',
+                          color: liveKeyColors[key.value] ? '#fff' : '#a9b1d6',
+                          backgroundColor: liveKeyColors[key.value] ? `${liveKeyColors[key.value]}22` : 'rgb(28, 28, 28)'
+                        }"
+                      >
+                        <div class="key-highlight-top"></div>
+                        <div class="key-content">
+                          <span class="key-label" style="font-size: 6px; font-weight: 700;">{{ key.name }}</span>
+                        </div>
+                        <div class="key-shadow-bottom"></div>
+                        <!-- Glowing custom LED projection -->
+                        <div 
+                          class="key-cap-led" 
+                          :style="{ 
+                            backgroundColor: liveKeyColors[key.value] || 'transparent',
+                            boxShadow: liveKeyColors[key.value] ? `0 -1px 12px 2px ${liveKeyColors[key.value]}` : 'none'
+                          }"
+                        ></div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
