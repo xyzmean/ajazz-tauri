@@ -124,6 +124,8 @@ export const sendMusicData = (
 ) => invoke<void>("send_music_data", { path, mode, speed, brightness, amplitudes });
 
 // --- Background helper (ajazz-helperd): runs independent of the GUI, autostarts at logon ---
+/** Authoritative host-OS check (Rust-side cfg!(target_os = "windows")). */
+export const isWindowsHost = () => invoke<boolean>("is_windows_host");
 export interface HelperConfig {
   mode: string; // "off" | "screen" | "gif"
   devicePath: string | null;

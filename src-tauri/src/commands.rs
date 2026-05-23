@@ -366,6 +366,13 @@ pub fn stop_led_stream(state: tauri::State<AppState>) -> Result<(), String> {
 
 // ── Background helper (ajazz-helperd) control ────────────────────────────────────────────────
 
+/// Host OS check — frontend can't trust navigator.platform inside WebView2 (returns "Win32",
+/// not "Windows"), so we ask Rust which is authoritative.
+#[tauri::command]
+pub fn is_windows_host() -> bool {
+    cfg!(target_os = "windows")
+}
+
 /// Read the current background-helper config.
 #[tauri::command]
 pub fn get_helper_config() -> HelperConfig {

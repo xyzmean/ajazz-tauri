@@ -21,6 +21,7 @@ import {
   calibrationStart,
   calibrationFinish,
   pollCalibrationSample,
+  isWindowsHost,
   type DeviceSummary,
   type DeviceInfo,
   type GameMode,
@@ -1132,7 +1133,9 @@ const calibrationActive = ref(false);
 const calibrationSamples = ref<Record<number, CalibrationSample>>({});
 let calibrationPollHandle: any = null;
 
-const isHostWindows = typeof navigator !== "undefined" && /Windows/i.test(navigator.platform || navigator.userAgent || "");
+// Resolved on mount from the Rust side — navigator.platform returns "Win32" (not "Windows"),
+// which breaks naive UA-based detection inside WebView2.
+const isHostWindows = ref(false);
 
 const calibratedCount = computed(() =>
   Object.values(calibrationSamples.value).filter((s) => s.calibrationStatus >= 1).length
@@ -1239,6 +1242,7 @@ function calibrationColor(ledIdx: number): string {
 onMounted(async () => {
   await refresh();
   loadSocdFromStorage();
+  try { isHostWindows.value = await isWindowsHost(); } catch { /* fall back to disabled UI */ }
   try {
     const cfg = await getHelperConfig();
     helperMode.value = cfg.mode;
@@ -1250,38 +1254,59 @@ onMounted(async () => {
 
 <template>
   <div class="app">
-    <header class="topbar">
-      <div class="brand">
-        <div class="logo-glow" style="background: var(--neon-pink); box-shadow: 0 0 10px var(--neon-pink), 0 0 20px var(--neon-pink);"></div>
-        <h1 style="background: linear-gradient(to right, var(--neon-pink), var(--neon-cyan)); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">AJAZZ CYBER COMPANION</h1>
+    <header class="cabinet-topbar">
+      <div class="cabinet-brand">
+        <div class="cabinet-monogram">AJ</div>
+        <div class="cabinet-wordmark">
+          <span class="wm-tag">CYBER COMPANION · v0.1</span>
+          <h1 class="wm-name">AJAZZ <span class="accent">DRIVER</span></h1>
+        </div>
       </div>
-      <button class="btn btn-secondary" :disabled="loading" @click="refresh" style="border-color: rgba(0, 240, 255, 0.4); box-shadow: 0 0 8px rgba(0,240,255,0.1);">
-        <svg v-if="loading" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite; color: var(--neon-cyan);">
-          <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-        </svg>
-        <span style="color: var(--neon-cyan); font-weight: 700;">{{ loading ? "Обновление…" : "Сканировать" }}</span>
+      <div class="cabinet-meta">
+        <span class="crumb">SLOT · <b>{{ devices.length || "—" }}</b></span>
+        <span class="sep">│</span>
+        <span class="crumb">MODEL · <b>{{ selected?.modelName ?? selected?.product ?? "NONE" }}</b></span>
+        <span class="sep">│</span>
+        <span class="crumb">FW · <b>{{ info ? `v${info.version}` : "—" }}</b></span>
+        <span class="sep">│</span>
+        <span class="crumb">RT · <b>{{ info ? `P${info.rtPrecision}` : "—" }}</b></span>
+      </div>
+      <button class="probe-button" :class="{ 'probe-busy': loading }" :disabled="loading" @click="refresh">
+        <span class="probe-led"></span>
+        {{ loading ? "Probing…" : "▸ Probe Bus" }}
       </button>
     </header>
 
     <main class="layout">
       <!-- Sidebar Selector -->
       <section class="sidebar" style="background: rgba(8, 10, 18, 0.7); backdrop-filter: blur(12px);">
-        <h2>Подключенные устройства</h2>
-        <p v-if="!devices.length && !loading" class="muted-hint" style="padding: 20px 0; text-align: left; font-size: 12px;">
-          Устройства не обнаружены. Пожалуйста, подключите клавиатуру к USB-порту.
+        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+          <span style="font-family: var(--font-mono); font-size: 9px; letter-spacing: 0.22em; color: var(--muted); text-transform: uppercase; font-weight: 700;">
+            ▸ Bus · HID Slots
+          </span>
+          <span class="status-capsule" :class="devices.length ? 'tone-cyan' : 'tone-muted'">
+            <span class="led"></span>{{ devices.length }} live
+          </span>
+        </div>
+        <p v-if="!devices.length && !loading" style="padding: 22px 6px; text-align: left; font-size: 11px; color: var(--muted); font-family: var(--font-mono); letter-spacing: 0.05em; line-height: 1.6; border: 1px dashed rgba(255,255,255,0.08); border-radius: 4px;">
+          → NO DEVICE ON BUS<br/>
+          <span style="opacity: 0.7;">Подключите клавиатуру к USB-порту и нажмите <b>Probe Bus</b>.</span>
         </p>
-        <ul class="device-list">
-          <li
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div
             v-for="d in devices"
             :key="d.path"
-            :class="{ active: selected?.path === d.path }"
+            class="hid-slot"
+            :class="{ 'is-active': selected?.path === d.path }"
             @click="read(d)"
-            style="border-color: rgba(255,255,255,0.06); background: rgba(255,255,255,0.02);"
           >
-            <span class="name" style="font-size: 13px; font-weight: 700;">{{ d.modelName ?? d.product ?? "HID-Клавиатура" }}</span>
-            <span class="ids" style="color: var(--neon-cyan);">{{ hex(d.vendorId) }}:{{ hex(d.productId) }}</span>
-          </li>
-        </ul>
+            <span class="slot-pip"></span>
+            <div class="slot-body">
+              <span class="slot-name">{{ d.modelName ?? d.product ?? "HID Keyboard" }}</span>
+              <span class="slot-id">{{ hex(d.vendorId) }}:{{ hex(d.productId) }}</span>
+            </div>
+          </div>
+        </div>
 
         <nav v-if="info" class="nav-menu" aria-label="Разделы">
           <div class="nav-section">
@@ -1332,220 +1357,362 @@ onMounted(async () => {
         <div v-if="successMessage" class="banner banner-success" style="border-color: rgba(16, 185, 129, 0.4); box-shadow: 0 0 15px rgba(16,185,129,0.1);">{{ successMessage }}</div>
 
         <template v-if="info">
-          <!-- Header stats -->
-          <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="display: flex; flex-direction: column; gap: 4px;">
-              <span style="font-size: 24px; font-weight: 800; color: #fff; letter-spacing: -0.03em;">
-                {{ selected?.modelName ?? selected?.product ?? "Tauri-Драйвер" }}
+          <!-- Header strip — model callsign + telemetry capsules -->
+          <div style="display: flex; justify-content: space-between; align-items: flex-end; gap: 18px; flex-wrap: wrap;">
+            <div style="display: flex; flex-direction: column; gap: 4px; min-width: 0;">
+              <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em; color: var(--muted); text-transform: uppercase;">
+                ▸ Active Device · Slot {{ devices.findIndex(x => x.path === selected?.path) + 1 || "—" }}
               </span>
-              <span style="font-size: 11px; font-family: ui-monospace, monospace; color: var(--muted);">
-                Путь порта: {{ selected?.path }}
+              <span style="font-family: var(--font); font-size: 26px; font-weight: 800; color: var(--text-bright); letter-spacing: -0.03em;">
+                {{ selected?.modelName ?? selected?.product ?? "Tauri Driver" }}
+              </span>
+              <span style="font-family: var(--font-mono); font-size: 10px; color: var(--muted); letter-spacing: 0.04em; opacity: 0.7; max-width: 540px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                {{ selected?.path }}
               </span>
             </div>
-            
-            <!-- Battery gauge -->
-            <div style="display: flex; align-items: center; gap: 8px; background: rgba(0,0,0,0.5); padding: 8px 16px; border-radius: 20px; border: 1px solid rgba(0, 240, 255, 0.2);">
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" :style="{ color: info.batteryLevel > 20 ? 'var(--neon-green)' : 'var(--neon-pink)' }">
-                <rect x="2" y="7" width="16" height="10" rx="2" ry="2"/>
-                <line x1="22" y1="11" x2="22" y2="13"/>
-              </svg>
-              <span style="font-weight: 800; color: #fff; font-size: 13px;">{{ info.batteryLevel }}%</span>
-              <span v-if="info.chargeStatus === 1" class="muted" style="font-size: 10px; font-weight: 800; color: var(--neon-green); text-shadow: 0 0 8px var(--neon-green);">ЗАРЯДКА</span>
+
+            <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+              <span class="status-capsule" :class="info.batteryLevel > 20 ? 'tone-green' : 'tone-pink'">
+                <span class="led"></span>BAT · {{ info.batteryLevel.toString().padStart(2,'0') }}%
+              </span>
+              <span v-if="info.chargeStatus === 1" class="status-capsule tone-yellow">
+                <span class="led"></span>Charging
+              </span>
+              <span class="status-capsule tone-cyan">
+                <span class="led"></span>{{ info.workMode === 1 ? "Wired" : info.workMode === 2 ? "2.4 GHz" : "Bluetooth" }}
+              </span>
+              <span class="status-capsule tone-purple">
+                <span class="led"></span>Profile · {{ info.currentProfile }}
+              </span>
             </div>
           </div>
 
           <!-- Core custom content window -->
-          <div class="card" style="flex: 0 1 auto; background: rgba(12, 14, 25, 0.7); border-color: rgba(255,255,255,0.06); padding: 24px; display: flex; flex-direction: column; gap: 16px;">
-            
-            <!-- 1. Technical specs properties -->
-            <div v-if="activeTab === 'info'" class="grid">
-              <div class="cell"><label>Интерфейс ядра</label><b>{{ selected?.modelName ?? "Универсальный" }}</b></div>
-              <div class="cell"><label>Версия прошивки</label><b>v{{ info.version }}</b></div>
-              <div class="cell"><label>Порт адресации</label><b>{{ hex(info.vendorId) }}:{{ hex(info.productId) }}</b></div>
-              <div class="cell"><label>Пользовательский профиль</label><b>Профиль {{ info.currentProfile }}</b></div>
-              <div class="cell"><label>Свободно в ROM</label><b>{{ info.romSize }} КБ</b></div>
-              <div class="cell"><label>Размер макросов</label><b>{{ info.macroSpaceSize }} байт</b></div>
-              <div class="cell"><label>Датчик осей</label><b>0x{{ info.sensor.toString(16).toUpperCase() }}</b></div>
-              <div class="cell"><label>Проводной режим</label><b>{{ info.workMode === 1 ? "Wired (Провод)" : info.workMode === 2 ? "2.4G Wireless" : "Bluetooth" }}</b></div>
-              <div class="cell"><label>Архитектура</label><b>v{{ info.frameVersion }}</b></div>
-              <div class="cell"><label>Спектр драйвера</label><b>v{{ info.lightingVersion }}</b></div>
-              <div class="cell"><label>Rapid-Trigger задержка</label><b>{{ info.rtPrecision === 0 ? "Стандартная (1/100)" : "Игровая (1/1000)" }}</b></div>
+          <div class="card" style="flex: 0 1 auto; background: rgba(12, 14, 25, 0.7); border-color: rgba(255,255,255,0.06); padding: 24px; display: flex; flex-direction: column; gap: 22px;">
+
+            <!-- 1. Technical specs — three-section instrument readout. -->
+            <div v-if="activeTab === 'info'" class="instrument-panel">
+              <div class="tab-headline">
+                <h3>System telemetry</h3>
+                <p>▸ DEVICE INFO · cmd 0x10 · 48-byte payload</p>
+              </div>
+
+              <div class="section-rule">
+                <span class="idx">01</span>
+                <span class="title">Identity</span>
+                <span class="line"></span>
+                <span class="meta">VID:PID locked at probe</span>
+              </div>
+              <div class="spec-grid">
+                <div class="spec-tile accent-pink">
+                  <span class="code">▸ MODEL</span>
+                  <span class="value">{{ selected?.modelName ?? "GENERIC" }}</span>
+                  <span class="footnote">Resolved from models.json</span>
+                </div>
+                <div class="spec-tile accent-cyan">
+                  <span class="code">▸ FIRMWARE</span>
+                  <span class="value">v{{ info.version }}</span>
+                  <span class="footnote">Frame arch v{{ info.frameVersion }}</span>
+                </div>
+                <div class="spec-tile">
+                  <span class="code">▸ VID:PID</span>
+                  <span class="value">{{ hex(info.vendorId) }}<span class="unit">:</span>{{ hex(info.productId) }}</span>
+                  <span class="footnote">Sonix VID 0C45</span>
+                </div>
+                <div class="spec-tile accent-purple">
+                  <span class="code">▸ PROFILE</span>
+                  <span class="value">P{{ info.currentProfile }}<span class="unit">/4</span></span>
+                  <span class="footnote">Onboard slot</span>
+                </div>
+              </div>
+
+              <div class="section-rule">
+                <span class="idx">02</span>
+                <span class="title">Hardware</span>
+                <span class="line"></span>
+                <span class="meta">Flash topology · sensor stack</span>
+              </div>
+              <div class="spec-grid">
+                <div class="spec-tile">
+                  <span class="code">▸ ROM FREE</span>
+                  <span class="value">{{ info.romSize }}<span class="unit">KB</span></span>
+                  <span class="footnote">User region</span>
+                </div>
+                <div class="spec-tile">
+                  <span class="code">▸ MACRO SPACE</span>
+                  <span class="value">{{ info.macroSpaceSize }}<span class="unit">B</span></span>
+                  <span class="footnote">Sector 0x9800</span>
+                </div>
+                <div class="spec-tile accent-yellow">
+                  <span class="code">▸ SENSOR</span>
+                  <span class="value">0x{{ info.sensor.toString(16).toUpperCase().padStart(4, '0') }}</span>
+                  <span class="footnote">Hall axis chipset</span>
+                </div>
+                <div class="spec-tile accent-green">
+                  <span class="code">▸ RT PRECISION</span>
+                  <span class="value">{{ info.rtPrecision === 0 ? "1/100" : "1/1000" }}</span>
+                  <span class="footnote">{{ info.rtPrecision === 0 ? "Standard" : "Esports" }} grade</span>
+                </div>
+              </div>
+
+              <div class="section-rule">
+                <span class="idx">03</span>
+                <span class="title">Telemetry</span>
+                <span class="line"></span>
+                <span class="meta">Live channel state</span>
+              </div>
+              <div class="spec-grid">
+                <div class="spec-tile" :class="info.batteryLevel > 20 ? 'accent-green' : 'accent-pink'">
+                  <span class="code">▸ BATTERY</span>
+                  <span class="value">{{ info.batteryLevel.toString().padStart(2,'0') }}<span class="unit">%</span></span>
+                  <span class="footnote">{{ info.chargeStatus === 1 ? "CHARGING" : "Idle" }}</span>
+                </div>
+                <div class="spec-tile accent-cyan">
+                  <span class="code">▸ LINK</span>
+                  <span class="value">{{ info.workMode === 1 ? "USB" : info.workMode === 2 ? "2.4G" : "BLE" }}</span>
+                  <span class="footnote">Wire-only commands</span>
+                </div>
+                <div class="spec-tile">
+                  <span class="code">▸ LIGHTING REV</span>
+                  <span class="value">v{{ info.lightingVersion }}</span>
+                  <span class="footnote">Effect engine</span>
+                </div>
+                <div class="spec-tile">
+                  <span class="code">▸ CHARGE</span>
+                  <span class="value">{{ info.chargeStatus === 1 ? "ACT" : "OFF" }}</span>
+                  <span class="footnote">Source state</span>
+                </div>
+              </div>
             </div>
 
-            <!-- 2. Standard Lighting Mode -->
-            <div v-else-if="activeTab === 'lighting' && ledEffect" style="display: flex; flex-direction: column; gap: 16px;">
-              <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));">
-                <div style="display: flex; flex-direction: column; gap: 14px;">
-                  <div class="form-group">
-                    <label>Режим встроенной подсветки</label>
-                    <select v-model.number="ledEffect.mode" class="select-input" style="background: rgba(0,0,0,0.5); border-color: rgba(255,255,255,0.08);">
-                      <option v-for="mode in lightModes" :key="mode.value" :value="mode.value">
-                        {{ mode.label }}
-                      </option>
-                    </select>
-                  </div>
+            <!-- 2. Built-in lighting effects -->
+            <div v-else-if="activeTab === 'lighting' && ledEffect" class="instrument-panel">
+              <div class="tab-headline">
+                <h3>Lighting effects</h3>
+                <p>▸ FX ENGINE · cmd 0x13 readback · cmd 0x23 write</p>
+              </div>
 
-                  <div class="form-group">
-                    <label>Яркость диодов</label>
-                    <div class="slider-container">
-                      <input type="range" min="0" max="5" v-model.number="ledEffect.brightness" class="range-slider range-slider-cyan">
-                      <span class="slider-value" style="color: var(--neon-cyan);">{{ ledEffect.brightness * 20 }}%</span>
-                    </div>
-                  </div>
+              <div class="section-rule">
+                <span class="idx">01</span>
+                <span class="title">Effect bank</span>
+                <span class="line"></span>
+                <span class="meta">Stored at flash 0x9600</span>
+              </div>
+              <div class="mode-rail">
+                <button
+                  v-for="mode in lightModes"
+                  :key="mode.value"
+                  class="mode-tile"
+                  :class="{ 'is-on': ledEffect.mode === mode.value }"
+                  @click="ledEffect.mode = mode.value; updateStaticBacklight();"
+                >
+                  <span class="mode-id">M{{ String(mode.value).padStart(2, '0') }}</span>
+                  <span class="mode-name">{{ mode.label }}</span>
+                </button>
+              </div>
 
-                  <div class="form-group">
-                    <label>Скорость волны</label>
-                    <div class="slider-container">
-                      <input type="range" min="1" max="5" v-model.number="ledEffect.speed" class="range-slider range-slider-cyan">
-                      <span class="slider-value" style="color: var(--neon-cyan);">{{ ledEffect.speed * 20 }}%</span>
-                    </div>
+              <div class="section-rule">
+                <span class="idx">02</span>
+                <span class="title">Palette</span>
+                <span class="line"></span>
+                <span class="meta">Primary · Secondary swatches</span>
+              </div>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;">
+                <div class="swatch-console">
+                  <label class="swatch" :style="{ background: primaryColor, color: primaryColor }">
+                    <input type="color" v-model="primaryColor">
+                  </label>
+                  <div class="swatch-meta">
+                    <span class="role">▸ Primary</span>
+                    <span class="hex">{{ primaryColor.toUpperCase() }}</span>
+                    <span class="rgb">R {{ ledEffect.red.toString().padStart(3,'0') }} · G {{ ledEffect.green.toString().padStart(3,'0') }} · B {{ ledEffect.blue.toString().padStart(3,'0') }}</span>
                   </div>
-
-                  <div class="form-group">
-                    <label>Направление движения эффекта</label>
-                    <select v-model.number="ledEffect.direction" class="select-input" style="background: rgba(0,0,0,0.5); border-color: rgba(255,255,255,0.08);">
-                      <option :value="0">Вправо (Слева направо)</option>
-                      <option :value="1">Влево (Справа налево)</option>
-                      <option :value="2">Вниз (Сверху вниз)</option>
-                      <option :value="3">Вверх (Снизу вверх)</option>
-                    </select>
+                  <div class="swatch-channel">
+                    <div><span class="label">R</span><div class="bar"><div class="fill" :style="{ width: (ledEffect.red/255*100)+'%', background: '#ff0040' }"></div></div></div>
+                    <div><span class="label">G</span><div class="bar"><div class="fill" :style="{ width: (ledEffect.green/255*100)+'%', background: '#39ff14' }"></div></div></div>
+                    <div><span class="label">B</span><div class="bar"><div class="fill" :style="{ width: (ledEffect.blue/255*100)+'%', background: '#00f0ff' }"></div></div></div>
                   </div>
                 </div>
-
-                <div style="display: flex; flex-direction: column; gap: 20px; justify-content: center;">
-                  <div class="color-picker-group">
-                    <div class="color-picker-card" style="background: rgba(0,0,0,0.4); border-color: rgba(255,255,255,0.04);">
-                      <label>Основной диод</label>
-                      <div class="color-picker-wrapper" :style="{ backgroundColor: primaryColor, borderColor: 'var(--neon-pink)' }">
-                        <input type="color" v-model="primaryColor" class="color-picker-native">
-                      </div>
-                      <span style="font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700; color: #fff;">{{ primaryColor.toUpperCase() }}</span>
-                    </div>
-
-                    <div class="color-picker-card" style="background: rgba(0,0,0,0.4); border-color: rgba(255,255,255,0.04);">
-                      <label>Вторичный</label>
-                      <div class="color-picker-wrapper" :style="{ backgroundColor: secondaryColor, borderColor: 'var(--neon-cyan)' }">
-                        <input type="color" v-model="secondaryColor" class="color-picker-native">
-                      </div>
-                      <span style="font-family: ui-monospace, monospace; font-size: 11px; font-weight: 700; color: #fff;">{{ secondaryColor.toUpperCase() }}</span>
-                    </div>
+                <div class="swatch-console">
+                  <label class="swatch" :style="{ background: secondaryColor, color: secondaryColor }">
+                    <input type="color" v-model="secondaryColor">
+                  </label>
+                  <div class="swatch-meta">
+                    <span class="role">▸ Secondary</span>
+                    <span class="hex">{{ secondaryColor.toUpperCase() }}</span>
+                    <span class="rgb">R {{ ledEffect.secondaryRed.toString().padStart(3,'0') }} · G {{ ledEffect.secondaryGreen.toString().padStart(3,'0') }} · B {{ ledEffect.secondaryBlue.toString().padStart(3,'0') }}</span>
                   </div>
-
-                  <div style="height: 48px; border-radius: 12px; border: 1px solid rgba(255,0,127,0.25); display: flex; align-items: center; justify-content: center; position: relative; overflow: hidden; background: #000; box-shadow: inset 0 0 10px rgba(255,0,127,0.15);">
-                    <div :style="{ position: 'absolute', top: 0, left: 0, bottom: 0, width: '50%', background: `linear-gradient(to right, ${primaryColor}, transparent)`, opacity: 0.3 }"></div>
-                    <div :style="{ position: 'absolute', top: 0, right: 0, bottom: 0, width: '50%', background: `linear-gradient(to left, ${secondaryColor}, transparent)`, opacity: 0.3 }"></div>
-                    <span style="font-size: 11px; font-weight: 800; color: #fff; z-index: 1; letter-spacing: 0.1em; text-transform: uppercase;">Встроенная волна активна</span>
+                  <div class="swatch-channel">
+                    <div><span class="label">R</span><div class="bar"><div class="fill" :style="{ width: (ledEffect.secondaryRed/255*100)+'%', background: '#ff0040' }"></div></div></div>
+                    <div><span class="label">G</span><div class="bar"><div class="fill" :style="{ width: (ledEffect.secondaryGreen/255*100)+'%', background: '#39ff14' }"></div></div></div>
+                    <div><span class="label">B</span><div class="bar"><div class="fill" :style="{ width: (ledEffect.secondaryBlue/255*100)+'%', background: '#00f0ff' }"></div></div></div>
                   </div>
                 </div>
               </div>
 
-              <div style="display: flex; justify-content: flex-end; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 16px;">
-                <button class="btn" :disabled="applying" @click="applyLedEffect" style="background: var(--neon-cyan); box-shadow: 0 0 15px rgba(0,240,255,0.35);">
-                  <svg v-if="applying" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation: spin 1s linear infinite;">
-                    <path d="M21 12a9 9 0 1 1-6.219-8.56"/>
-                  </svg>
-                  <span style="font-weight: 800; color: #000;">{{ applying ? "Сохранение…" : "Сохранить профиль подсветки" }}</span>
+              <div class="section-rule">
+                <span class="idx">03</span>
+                <span class="title">Modulation</span>
+                <span class="line"></span>
+                <span class="meta">Brightness · Speed · Direction</span>
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px;">
+                <div class="field-strip">
+                  <span class="field-label">▸ Brightness</span>
+                  <span class="field-control"><input type="range" min="0" max="5" v-model.number="ledEffect.brightness" class="range-slider range-slider-cyan" style="flex:1;"></span>
+                  <span class="field-readout">{{ (ledEffect.brightness * 20).toString().padStart(3,'0') }}<span class="unit">%</span></span>
+                </div>
+                <div class="field-strip">
+                  <span class="field-label">▸ Wave Speed</span>
+                  <span class="field-control"><input type="range" min="1" max="5" v-model.number="ledEffect.speed" class="range-slider range-slider-cyan" style="flex:1;"></span>
+                  <span class="field-readout">{{ (ledEffect.speed * 20).toString().padStart(3,'0') }}<span class="unit">%</span></span>
+                </div>
+                <div class="field-strip">
+                  <span class="field-label">▸ Direction</span>
+                  <span class="field-control" style="display: flex; gap: 6px;">
+                    <div class="toggle-bank">
+                      <button :class="{ 'is-on': ledEffect.direction === 0 }" @click="ledEffect.direction = 0">→ R</button>
+                      <button :class="{ 'is-on': ledEffect.direction === 1 }" @click="ledEffect.direction = 1">← L</button>
+                      <button :class="{ 'is-on': ledEffect.direction === 2 }" @click="ledEffect.direction = 2">↓ D</button>
+                      <button :class="{ 'is-on': ledEffect.direction === 3 }" @click="ledEffect.direction = 3">↑ U</button>
+                    </div>
+                  </span>
+                  <span class="field-readout">D{{ ledEffect.direction }}</span>
+                </div>
+              </div>
+
+              <div style="display: flex; justify-content: flex-end; gap: 10px; border-top: 1px dashed rgba(255,255,255,0.06); padding-top: 16px;">
+                <button class="console-action tone-cyan" :disabled="applying" @click="applyLedEffect">
+                  {{ applying ? "Writing…" : "Write Effect" }}
                 </button>
               </div>
             </div>
 
             <!-- 3. Screen Sync Mirror / Ambient Sync -->
-            <div v-else-if="activeTab === 'ambient'" style="display: flex; flex-direction: column; gap: 16px;" class="card-neon-cyan">
-              <span style="font-size: 13px; color: var(--text-bright); line-height: 1.5;">
-                Проецируйте картинку с вашего экрана или открытого игрового окна в реальном времени напрямую на физические клавиши клавиатуры на высокой скорости!
-              </span>
+            <div v-else-if="activeTab === 'ambient'" class="instrument-panel">
+              <div class="tab-headline">
+                <h3>Ambient screen mirror</h3>
+                <p>▸ getDisplayMedia → 16×6 colour sample → cmd 0x32 stream</p>
+              </div>
 
-              <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); align-items: center;">
+              <div class="section-rule">
+                <span class="idx">01</span>
+                <span class="title">Source</span>
+                <span class="line"></span>
+                <span class="meta">{{ isAmbientActive ? 'streaming · live ~25-30 fps' : 'idle · awaiting capture grant' }}</span>
+              </div>
+
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; align-items: stretch;">
                 <div style="display: flex; flex-direction: column; gap: 12px;">
-                  <div style="display: flex; align-items: center; gap: 10px;">
-                    <div class="logo-glow" :style="{ background: isAmbientActive ? 'var(--neon-green)' : 'var(--neon-pink)', boxShadow: isAmbientActive ? '0 0 12px var(--neon-green)' : 'none' }"></div>
-                    <span style="font-size: 13px; font-weight: 800;">Статус зеркалирования: <b :style="{ color: isAmbientActive ? 'var(--neon-green)' : 'var(--neon-pink)' }">{{ isAmbientActive ? 'АКТИВНО' : 'ВЫКЛЮЧЕНО' }}</b></span>
+                  <div class="status-capsule" :class="isAmbientActive ? 'tone-green' : 'tone-muted'" style="align-self: flex-start;">
+                    <span class="led"></span>{{ isAmbientActive ? 'STREAMING' : 'STAND-BY' }}
                   </div>
-                  
-                  <div style="font-size: 11px; color: var(--muted);">
-                    * Рекомендуется выбрать конкретную вкладку или игровое окно при запросе совместного доступа к экрану для максимальной точности цветовых оттенков.
-                  </div>
-                  
-                  <div style="display: flex; gap: 10px; margin-top: 10px;">
-                    <button v-if="!isAmbientActive" class="btn" @click="startAmbientSync" style="background: var(--neon-cyan); box-shadow: 0 0 15px rgba(0,240,255,0.3); color: #000; font-weight: 800; width: 100%; justify-content: center;">
-                      Включить зеркало
+                  <p style="margin: 0; font-size: 12px; color: var(--muted); line-height: 1.6; font-family: var(--font-mono); letter-spacing: 0.02em;">
+                    Браузер запросит экран / окно / вкладку — лучше выбрать конкретное окно: меньше шум, точнее средний цвет под каждым физическим LED.
+                  </p>
+                  <div style="margin-top: auto;">
+                    <button v-if="!isAmbientActive" class="console-action tone-cyan" @click="startAmbientSync" :disabled="!selected">
+                      Engage Mirror
                     </button>
-                    <button v-else class="btn btn-danger" @click="stopAmbientSync" style="width: 100%; justify-content: center;">
-                      Остановить трансляцию
+                    <button v-else class="console-action tone-danger" @click="stopAmbientSync">
+                      Halt Stream
                     </button>
                   </div>
                 </div>
 
-                <div class="ambient-monitor" style="border-color: rgba(0, 240, 255, 0.2);">
-                  <div class="ambient-monitor-glow" :style="{ background: isAmbientActive ? 'radial-gradient(circle at center, rgba(0, 240, 255, 0.25) 0%, transparent 70%)' : 'none' }"></div>
-                  <svg v-if="!isAmbientActive" width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: rgba(255,255,255,0.15);">
-                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
-                    <line x1="8" y1="21" x2="16" y2="21"/>
-                    <line x1="12" y1="17" x2="12" y2="21"/>
-                  </svg>
-                  <div v-else style="display: flex; flex-direction: column; align-items: center; gap: 6px; z-index: 1;">
-                    <span style="font-size: 11px; font-weight: 800; color: var(--neon-cyan); text-transform: uppercase; letter-spacing: 0.1em; text-shadow: 0 0 10px rgba(0,240,255,0.4);">Идет стриминг потока</span>
-                    <span style="font-size: 10px; color: var(--muted); font-family: ui-monospace, monospace;">~25-30 кадров/сек</span>
+                <div style="position: relative; border: 1px solid rgba(0,240,255,0.25); border-radius: 4px; overflow: hidden;
+                            background: linear-gradient(135deg, rgba(0,240,255,0.04), rgba(0,0,0,0.6));
+                            min-height: 180px; display: flex; align-items: center; justify-content: center;">
+                  <div v-if="!isAmbientActive" style="display: flex; flex-direction: column; align-items: center; gap: 6px; opacity: 0.5;">
+                    <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: var(--neon-cyan);">
+                      <rect x="2" y="3" width="20" height="14" rx="1" ry="1"/>
+                      <line x1="8" y1="21" x2="16" y2="21"/>
+                      <line x1="12" y1="17" x2="12" y2="21"/>
+                    </svg>
+                    <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; color: var(--muted); text-transform: uppercase;">No signal</span>
+                  </div>
+                  <div v-else style="display: flex; flex-direction: column; align-items: center; gap: 8px;">
+                    <span style="font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; color: var(--neon-cyan); text-transform: uppercase; text-shadow: 0 0 12px rgba(0,240,255,0.5);">▸ Live capture</span>
+                    <span class="numeric-readout">~30<span class="unit">FPS</span></span>
                   </div>
                 </div>
               </div>
             </div>
 
             <!-- 3b. Background service (helper daemon, runs without the app open) -->
-            <div v-else-if="activeTab === 'background'" style="display: flex; flex-direction: column; gap: 16px;" class="card-neon-cyan">
-              <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                <span style="font-size: 11px; font-weight: 800; padding: 4px 10px; border-radius: 999px;
-                             border: 1px solid rgba(0,240,255,0.45); color: var(--neon-cyan);
-                             background: rgba(0,240,255,0.08); letter-spacing: 0.05em;">
-                  WINDOWS ONLY
-                </span>
-                <span v-if="!isHostWindows" style="font-size: 11px; color: var(--neon-pink); font-weight: 700;">
-                  Текущая ОС — не Windows: фоновый сервис не запустится.
+            <div v-else-if="activeTab === 'background'" class="instrument-panel">
+              <div class="tab-headline">
+                <h3>Background service</h3>
+                <p>▸ ajazz-helperd · DXGI screen + GIF loop · HKCU autostart</p>
+              </div>
+
+              <div class="compat-banner" :class="{ 'tone-warn': !isHostWindows }">
+                <span class="badge">{{ isHostWindows ? "WIN32 · READY" : "HOST · " + (isHostWindows ? "WIN" : "UNIX") }}</span>
+                <span style="font-family: var(--font-mono); letter-spacing: 0.04em;">
+                  {{ isHostWindows
+                     ? "Screen capture via DXGI Desktop Duplication. Autostart via HKCU\\…\\Run."
+                     : "Хост — не Windows: сервис не запустится. Только UI-вкладка для предпросмотра." }}
                 </span>
               </div>
-              <span style="font-size: 13px; color: var(--text-bright); line-height: 1.5;">
-                Фоновый сервис стримит экран или GIF на клавиатуру <b>даже когда это приложение закрыто</b>.
-                Он запускается при входе в Windows и работает независимо от GUI.
-              </span>
-              <div style="font-size: 11px; color: var(--muted);">
-                Захват экрана и автозапуск — только Windows (DXGI + HKCU\…\Run). Пока фоновый режим активен,
-                не включайте эмбиент/GIF здесь же — клавиатурой управляет один процесс.
+
+              <div class="section-rule">
+                <span class="idx">01</span>
+                <span class="title">Mode select</span>
+                <span class="line"></span>
+                <span class="meta">writes to %APPDATA%/ajazz-driver/helper.json</span>
+              </div>
+
+              <div class="toggle-bank tone-green" style="display: flex; width: max-content;">
+                <button :class="{ 'is-on': helperMode === 'off' }" :disabled="!isHostWindows" @click="setHelperMode('off')">Off</button>
+                <button :class="{ 'is-on': helperMode === 'screen' }" :disabled="!isHostWindows" @click="setHelperMode('screen')">Screen</button>
+                <button :class="{ 'is-on': helperMode === 'gif' }" :disabled="!isHostWindows" @click="setHelperMode('gif')">GIF</button>
+              </div>
+
+              <div class="section-rule">
+                <span class="idx">02</span>
+                <span class="title">GIF source</span>
+                <span class="line"></span>
+                <span class="meta">{{ helperGifPath ? 'asset bound' : 'no asset' }}</span>
+              </div>
+
+              <div class="asset-console">
+                <div class="asset-meta">
+                  <span class="kicker">▸ Path</span>
+                  <input v-model="helperGifPath" type="text" :placeholder="`C:\\\\path\\\\to\\\\loop.gif`" :disabled="!isHostWindows"
+                         style="background: transparent; border: none; color: var(--text-bright); font-family: var(--font-mono); font-size: 13px; padding: 0; outline: none;" />
+                  <span class="stats">{{ helperGifPath ? 'PATH SET · helper polls every tick' : 'NO ASSET LOADED' }}</span>
+                </div>
+              </div>
+
+              <div class="section-rule">
+                <span class="idx">03</span>
+                <span class="title">Frame rate</span>
+                <span class="line"></span>
+                <span class="meta">5 ≤ fps ≤ 60</span>
+              </div>
+
+              <div class="field-strip">
+                <span class="field-label">▸ FPS Target</span>
+                <span class="field-control">
+                  <input type="range" min="5" max="60" v-model.number="helperFps" :disabled="!isHostWindows" class="range-slider range-slider-cyan" style="flex: 1;">
+                </span>
+                <span class="field-readout">{{ helperFps.toString().padStart(2, '0') }}<span class="unit">FPS</span></span>
+              </div>
+
+              <div class="section-rule">
+                <span class="idx">04</span>
+                <span class="title">Autostart</span>
+                <span class="line"></span>
+                <span class="meta">HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run</span>
               </div>
 
               <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <button class="btn" :class="{ 'btn-secondary': helperMode !== 'screen' }"
-                        :disabled="!isHostWindows"
-                        @click="setHelperMode('screen')"
-                        :style="helperMode === 'screen' ? 'background: var(--neon-green); color:#000; font-weight:800;' : ''">
-                  Экран → клавиатура
+                <button class="console-action tone-green" :disabled="!isHostWindows" @click="enableAutostart">
+                  Install Autostart
                 </button>
-                <button class="btn" :class="{ 'btn-secondary': helperMode !== 'gif' }"
-                        :disabled="!isHostWindows"
-                        @click="setHelperMode('gif')"
-                        :style="helperMode === 'gif' ? 'background: var(--neon-green); color:#000; font-weight:800;' : ''">
-                  GIF (зациклить)
+                <button class="console-action tone-pink" :disabled="!isHostWindows" @click="disableAutostart">
+                  Remove Autostart
                 </button>
-                <button class="btn btn-danger" v-if="helperMode !== 'off'" @click="setHelperMode('off')">
-                  Остановить фон
-                </button>
-              </div>
-
-              <label style="display: flex; flex-direction: column; gap: 6px; font-size: 12px;">
-                Путь к GIF-файлу (для режима GIF):
-                <input v-model="helperGifPath" type="text" placeholder="C:\\path\\to\\anim.gif" :disabled="!isHostWindows"
-                       style="padding: 8px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); color: var(--text-bright);" />
-              </label>
-
-              <div style="display: flex; align-items: center; gap: 10px; font-size: 12px;">
-                <span>Кадр/сек:</span>
-                <input v-model.number="helperFps" type="number" min="5" max="60" :disabled="!isHostWindows"
-                       style="width: 70px; padding: 6px; border-radius: 8px; background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.12); color: var(--text-bright);" />
-                <span style="font-size: 11px; color: var(--muted);">статус: <b :style="{ color: helperMode === 'off' ? 'var(--neon-pink)' : 'var(--neon-green)' }">{{ helperMode === 'off' ? 'ВЫКЛ' : helperMode.toUpperCase() }}</b></span>
-              </div>
-
-              <div style="display: flex; gap: 10px; margin-top: 6px;">
-                <button class="btn btn-secondary" :disabled="!isHostWindows" @click="enableAutostart">Включить автозапуск при входе</button>
-                <button class="btn btn-secondary" :disabled="!isHostWindows" @click="disableAutostart">Отключить автозапуск</button>
               </div>
             </div>
 
@@ -1794,13 +1961,7 @@ onMounted(async () => {
                     {{ preset.name }}
                   </span>
                   <svg class="preset-curve" viewBox="0 0 100 40" preserveAspectRatio="none">
-                    <defs>
-                      <linearGradient :id="`g-${preset.id}`" x1="0" x2="0" y1="0" y2="1">
-                        <stop offset="0%" :stop-color="preset.accent" stop-opacity="0.5"/>
-                        <stop offset="100%" :stop-color="preset.accent" stop-opacity="0"/>
-                      </linearGradient>
-                    </defs>
-                    <path :d="`${presetCurvePath(preset.curve)} L 100,40 L 0,40 Z`" :fill="`url(#g-${preset.id})`" />
+                    <path :d="`${presetCurvePath(preset.curve)} L 100,40 L 0,40 Z`" :fill="preset.accent" fill-opacity="0.18" />
                     <path :d="presetCurvePath(preset.curve)" fill="none" :stroke="preset.accent" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
                   </svg>
                   <span class="preset-strapline">{{ preset.desc }}</span>
@@ -1911,13 +2072,7 @@ onMounted(async () => {
                     </label>
 
                     <svg class="socd-bridge" viewBox="0 0 70 60" fill="none">
-                      <defs>
-                        <linearGradient id="bridge-grad" x1="0" x2="1" y1="0" y2="0">
-                          <stop offset="0%" stop-color="#ff007f" stop-opacity="0.8"/>
-                          <stop offset="100%" stop-color="#00f0ff" stop-opacity="0.8"/>
-                        </linearGradient>
-                      </defs>
-                      <path d="M 4 30 C 20 4, 50 4, 66 30" stroke="url(#bridge-grad)" stroke-width="1.5" fill="none" stroke-dasharray="3 3"/>
+                      <path d="M 4 30 C 20 4, 50 4, 66 30" stroke="#9d00ff" stroke-width="1.5" fill="none" stroke-dasharray="3 3" opacity="0.8"/>
                       <circle cx="4" cy="30" r="3" fill="#ff007f"/>
                       <circle cx="66" cy="30" r="3" fill="#00f0ff"/>
                       <text x="35" y="50" text-anchor="middle" font-family="JetBrains Mono, monospace" font-size="7" fill="#8295a5" letter-spacing="1.5">SOCD</text>

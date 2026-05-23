@@ -32,6 +32,7 @@ pub fn run() {
             commands::push_led_frame,
             commands::stop_led_stream,
             commands::enter_custom_mode,
+            commands::is_windows_host,
             commands::get_helper_config,
             commands::set_helper_config,
             commands::install_helper_autostart,
