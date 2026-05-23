@@ -545,8 +545,12 @@ pub fn parse_calibration_sample(buf: &[u8]) -> Option<CalibrationSample> {
 }
 
 pub fn calibration_start(device: &HidDevice) -> Result<(), String> {
-    let packet = build_packet(cmd::SET_CALIBRATION_ON_V2, 0, 0, None, true);
-    send(device, &packet)
+    // Upstream issues SET_CALIBRATION_ON_V2 as a 24-byte read-data exchange, not a one-shot
+    // send. The firmware only flips into sample-streaming mode after the host has consumed
+    // its acknowledgement — sending without reading leaves it in the previous state and the
+    // 60ms poll loop just sees timeouts, hence "starts but no samples".
+    let _ack = read_data(device, cmd::SET_CALIBRATION_ON_V2, 24, 2000)?;
+    Ok(())
 }
 
 pub fn calibration_finish(device: &HidDevice) -> Result<(), String> {

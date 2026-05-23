@@ -1,3 +1,7 @@
+// Headless background service — no console window on Windows release builds. Debug builds keep
+// the console so eprintln!() output is visible when iterating locally.
+#![cfg_attr(all(not(debug_assertions), target_os = "windows"), windows_subsystem = "windows")]
+
 //! `ajazz-helperd` — headless background helper.
 //!
 //! Streams live content to the keyboard backlight independent of the GUI:
@@ -128,7 +132,19 @@ fn run_screen(api: &HidApi, cfg: &helper_config::HelperConfig) -> Result<(), Str
     let device = open_keyboard(api, &cfg.device_path).ok_or("no vendor keyboard found")?;
     protocol::set_custom_lighting_mode(&device)?;
 
-    let display = Display::primary().map_err(|e| format!("no display: {e}"))?;
+    // Select the configured monitor; out-of-range or unset falls back to primary so we never
+    // hang silently on a stale config from a removed display.
+    let display = match cfg.screen_index {
+        Some(idx) => {
+            let mut all = Display::all().map_err(|e| format!("enumerate displays: {e}"))?;
+            if idx < all.len() {
+                all.swap_remove(idx)
+            } else {
+                Display::primary().map_err(|e| format!("no display: {e}"))?
+            }
+        }
+        None => Display::primary().map_err(|e| format!("no display: {e}"))?,
+    };
     let mut capturer = Capturer::new(display).map_err(|e| format!("capturer: {e}"))?;
     let (w, h) = (capturer.width(), capturer.height());
     let frame_dt = Duration::from_millis((1000 / cfg.fps.max(1)) as u64);

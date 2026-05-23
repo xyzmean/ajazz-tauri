@@ -12,6 +12,7 @@ pub fn run() {
     let api = HidApi::new().expect("failed to initialize hidapi");
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .manage(AppState {
             api: Mutex::new(api),
             cached_device: Mutex::new(None),
@@ -33,6 +34,8 @@ pub fn run() {
             commands::stop_led_stream,
             commands::enter_custom_mode,
             commands::is_windows_host,
+            commands::list_displays,
+            commands::pick_gif_file,
             commands::get_helper_config,
             commands::set_helper_config,
             commands::install_helper_autostart,

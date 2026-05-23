@@ -19,6 +19,10 @@ pub struct HelperConfig {
     pub gif_path: Option<String>,
     /// Capture / playback cadence ceiling, frames per second.
     pub fps: u32,
+    /// Display to mirror in `screen` mode. `None` (or out-of-range) → primary display.
+    /// Indexes into `scrap::Display::all()`.
+    #[serde(default)]
+    pub screen_index: Option<usize>,
 }
 
 impl Default for HelperConfig {
@@ -28,6 +32,7 @@ impl Default for HelperConfig {
             device_path: None,
             gif_path: None,
             fps: 30,
+            screen_index: None,
         }
     }
 }

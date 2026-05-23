@@ -22,6 +22,9 @@ import {
   calibrationFinish,
   pollCalibrationSample,
   isWindowsHost,
+  listDisplays,
+  pickGifFile,
+  type DisplayInfo,
   type DeviceSummary,
   type DeviceInfo,
   type GameMode,
@@ -897,6 +900,32 @@ const lightModes = [
 const helperMode = ref<string>("off");
 const helperGifPath = ref<string>("");
 const helperFps = ref<number>(30);
+const helperScreenIndex = ref<number | null>(null);
+const helperDisplays = ref<DisplayInfo[]>([]);
+
+async function refreshDisplays() {
+  try {
+    helperDisplays.value = await listDisplays();
+    // First time we see the list, default-select the primary monitor so the dropdown isn't
+    // blank. The user can change it, and the choice is persisted via helper.json.
+    if (helperScreenIndex.value == null && helperDisplays.value.length) {
+      const primary = helperDisplays.value.find((d) => d.isPrimary) ?? helperDisplays.value[0];
+      helperScreenIndex.value = primary.index;
+    }
+  } catch { /* non-Windows hosts return [] silently */ }
+}
+
+async function pickHelperGif() {
+  try {
+    const picked = await pickGifFile();
+    if (picked) {
+      helperGifPath.value = picked;
+      await pushHelperConfig();
+    }
+  } catch (e) {
+    error.value = "Не удалось открыть диалог выбора файла: " + String(e);
+  }
+}
 
 async function pushHelperConfig() {
   try {
@@ -905,6 +934,7 @@ async function pushHelperConfig() {
       devicePath: selected.value?.path ?? null,
       gifPath: helperGifPath.value || null,
       fps: helperFps.value || 30,
+      screenIndex: helperScreenIndex.value,
     });
   } catch (e) {
     error.value = "Не удалось записать конфиг фонового сервиса: " + String(e);
@@ -1259,7 +1289,9 @@ onMounted(async () => {
     helperMode.value = cfg.mode;
     helperGifPath.value = cfg.gifPath ?? "";
     helperFps.value = cfg.fps || 30;
+    helperScreenIndex.value = cfg.screenIndex ?? null;
   } catch { /* helper config optional */ }
+  if (isHostWindows.value) await refreshDisplays();
 });
 </script>
 
@@ -1398,8 +1430,9 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- Core custom content window -->
-          <div class="card" style="flex: 0 1 auto; background: rgba(12, 14, 25, 0.7); border-color: rgba(255,255,255,0.06); padding: 24px; display: flex; flex-direction: column; gap: 22px;">
+          <!-- Core custom content window. flex-shrink: 0 so tall panels (magnetic, lighting)
+               keep their natural height and the parent .detail scrolls instead of squashing them. -->
+          <div class="card" style="flex: 0 0 auto; background: rgba(12, 14, 25, 0.7); border-color: rgba(255,255,255,0.06); padding: 24px; display: flex; flex-direction: column; gap: 22px;">
 
             <!-- 1. Technical specs — three-section instrument readout. -->
             <div v-if="activeTab === 'info'" class="instrument-panel">
@@ -1679,20 +1712,53 @@ onMounted(async () => {
                 <button :class="{ 'is-on': helperMode === 'gif' }" :disabled="!isHostWindows" @click="setHelperMode('gif')">GIF</button>
               </div>
 
+              <!-- Screen selector — only relevant when helper is in screen-mirror mode -->
+              <template v-if="helperMode === 'screen'">
+                <div class="section-rule">
+                  <span class="idx">02</span>
+                  <span class="title">Display</span>
+                  <span class="line"></span>
+                  <span class="meta">{{ helperDisplays.length }} monitor{{ helperDisplays.length === 1 ? '' : 's' }} detected</span>
+                </div>
+                <div class="field-strip">
+                  <span class="field-label">▸ Mirror source</span>
+                  <span class="field-control" style="display: flex; gap: 6px; flex-wrap: wrap;">
+                    <select
+                      v-model.number="helperScreenIndex"
+                      :disabled="!isHostWindows || !helperDisplays.length"
+                      @change="pushHelperConfig"
+                      class="select-input"
+                      style="flex: 1; min-width: 220px; background: rgba(0,0,0,0.5);"
+                    >
+                      <option v-for="d in helperDisplays" :key="d.index" :value="d.index">
+                        Display {{ d.index + 1 }} · {{ d.width }}×{{ d.height }}{{ d.isPrimary ? ' (primary)' : '' }}
+                      </option>
+                    </select>
+                    <button class="console-action tone-cyan" :disabled="!isHostWindows" @click="refreshDisplays" style="flex: 0 0 auto;">
+                      ↺ Refresh
+                    </button>
+                  </span>
+                </div>
+              </template>
+
               <div class="section-rule">
-                <span class="idx">02</span>
+                <span class="idx">{{ helperMode === 'screen' ? '03' : '02' }}</span>
                 <span class="title">GIF source</span>
                 <span class="line"></span>
                 <span class="meta">{{ helperGifPath ? 'asset bound' : 'no asset' }}</span>
               </div>
 
               <div class="asset-console">
-                <div class="asset-meta">
-                  <span class="kicker">▸ Path</span>
-                  <input v-model="helperGifPath" type="text" :placeholder="`C:\\\\path\\\\to\\\\loop.gif`" :disabled="!isHostWindows"
-                         style="background: transparent; border: none; color: var(--text-bright); font-family: var(--font-mono); font-size: 13px; padding: 0; outline: none;" />
+                <div class="asset-meta" style="min-width: 0;">
+                  <span class="kicker">▸ File</span>
+                  <span style="color: var(--text-bright); font-family: var(--font-mono); font-size: 13px; word-break: break-all; overflow-wrap: anywhere;">
+                    {{ helperGifPath || "— ничего не выбрано —" }}
+                  </span>
                   <span class="stats">{{ helperGifPath ? 'PATH SET · helper polls every tick' : 'NO ASSET LOADED' }}</span>
                 </div>
+                <button class="console-action tone-pink" :disabled="!isHostWindows" @click="pickHelperGif" style="flex: 0 0 auto;">
+                  ▸ Pick GIF…
+                </button>
               </div>
 
               <div class="section-rule">

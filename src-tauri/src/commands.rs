@@ -373,6 +373,59 @@ pub fn is_windows_host() -> bool {
     cfg!(target_os = "windows")
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DisplayInfo {
+    pub index: usize,
+    pub width: u32,
+    pub height: u32,
+    pub is_primary: bool,
+}
+
+/// Enumerate displays available to the screen-mirror helper. Windows-only (scrap's Display
+/// type isn't built on other platforms in our deps); other hosts get an empty list.
+#[tauri::command]
+pub fn list_displays() -> Result<Vec<DisplayInfo>, String> {
+    #[cfg(windows)]
+    {
+        use scrap::Display;
+        let primary_dims = Display::primary().ok().map(|d| (d.width(), d.height()));
+        let mut out = Vec::new();
+        let displays = Display::all().map_err(|e| format!("enumerate displays: {e}"))?;
+        for (i, d) in displays.into_iter().enumerate() {
+            let (w, h) = (d.width(), d.height());
+            out.push(DisplayInfo {
+                index: i,
+                width: w as u32,
+                height: h as u32,
+                is_primary: primary_dims == Some((w, h)),
+            });
+        }
+        Ok(out)
+    }
+    #[cfg(not(windows))]
+    {
+        Ok(Vec::new())
+    }
+}
+
+/// Native open-file dialog filtered to GIF — returns the selected path or None on cancel.
+/// Wrapping the dialog plugin in a Rust command keeps the frontend bridge limited to
+/// `invoke()` (no extra @tauri-apps/plugin-dialog dependency on the JS side).
+#[tauri::command]
+pub async fn pick_gif_file(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = std::sync::mpsc::channel();
+    app.dialog()
+        .file()
+        .add_filter("GIF", &["gif"])
+        .pick_file(move |path| {
+            let _ = tx.send(path.and_then(|p| p.into_path().ok()));
+        });
+    let picked = rx.recv().map_err(|e| format!("dialog channel: {e}"))?;
+    Ok(picked.map(|p| p.to_string_lossy().into_owned()))
+}
+
 /// Read the current background-helper config.
 #[tauri::command]
 pub fn get_helper_config() -> HelperConfig {
@@ -394,15 +447,31 @@ fn helperd_path() -> Option<std::path::PathBuf> {
     Some(dir.join(name))
 }
 
+/// Build a Command for the helper with the no-console flag on Windows. Without
+/// CREATE_NO_WINDOW (0x08000000) every spawn flashes a black cmd window even when the binary
+/// itself is windows-subsystem — the *parent* spawn briefly inherits a console.
+fn helperd_command(p: &std::path::Path) -> std::process::Command {
+    let cmd = std::process::Command::new(p);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        let mut c = cmd;
+        c.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        return c;
+    }
+    #[cfg(not(windows))]
+    cmd
+}
+
 /// Register the helper to start at logon and launch it now.
 #[tauri::command]
 pub fn install_helper_autostart() -> Result<(), String> {
     let p = helperd_path().ok_or("helper binary not found next to the app")?;
-    std::process::Command::new(&p)
+    helperd_command(&p)
         .arg("--install")
         .status()
         .map_err(|e| format!("--install failed: {e}"))?;
-    std::process::Command::new(&p)
+    helperd_command(&p)
         .spawn()
         .map_err(|e| format!("launch failed: {e}"))?;
     Ok(())
@@ -412,7 +481,7 @@ pub fn install_helper_autostart() -> Result<(), String> {
 #[tauri::command]
 pub fn uninstall_helper_autostart() -> Result<(), String> {
     let p = helperd_path().ok_or("helper binary not found next to the app")?;
-    std::process::Command::new(&p)
+    helperd_command(&p)
         .arg("--uninstall")
         .status()
         .map_err(|e| format!("--uninstall failed: {e}"))?;

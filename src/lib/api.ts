@@ -126,11 +126,25 @@ export const sendMusicData = (
 // --- Background helper (ajazz-helperd): runs independent of the GUI, autostarts at logon ---
 /** Authoritative host-OS check (Rust-side cfg!(target_os = "windows")). */
 export const isWindowsHost = () => invoke<boolean>("is_windows_host");
+
+export interface DisplayInfo {
+  index: number;
+  width: number;
+  height: number;
+  isPrimary: boolean;
+}
+/** Enumerate monitors available to the screen-mirror helper (Windows; empty elsewhere). */
+export const listDisplays = () => invoke<DisplayInfo[]>("list_displays");
+
+/** Native open-file dialog filtered to .gif — returns the chosen path or null on cancel. */
+export const pickGifFile = () => invoke<string | null>("pick_gif_file");
+
 export interface HelperConfig {
   mode: string; // "off" | "screen" | "gif"
   devicePath: string | null;
   gifPath: string | null;
   fps: number;
+  screenIndex: number | null;
 }
 /** Read the background helper's current config. */
 export const getHelperConfig = () => invoke<HelperConfig>("get_helper_config");
